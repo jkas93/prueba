@@ -61,7 +61,14 @@ export function PublicDailyProgressView({ partidas, dailyProgress = [] }: Props)
                   </div>
                   <div>
                     <h2 className="text-xl font-bold tracking-tight text-primary-900">{partida.name}</h2>
-                    <p className="text-xs font-semibold uppercase tracking-wider text-surface-200">Partida Principal</p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-surface-200">Partida Principal</p>
+                      {partida.accumulatedPercent !== undefined && (
+                        <span className="text-xs font-bold text-primary-600 bg-primary-50 px-2 py-0.5 rounded-md border border-primary-100">
+                          {partida.accumulatedPercent.toFixed(2)}% Acumulado
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -69,10 +76,17 @@ export function PublicDailyProgressView({ partidas, dailyProgress = [] }: Props)
                   {partida.items.map((item: ItemProgress) => (
                     <div key={item.id} className="bg-white rounded-2xl shadow-sm border border-surface-700/60 overflow-hidden transition-all hover:border-surface-600">
                       <div className="bg-surface-50 px-5 py-3 border-b border-surface-700/60">
-                        <h3 className="text-sm font-semibold text-surface-200 flex items-center gap-2">
-                           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                          {item.name}
-                        </h3>
+                        <div className="flex items-center justify-between">
+                          <h3 className="text-sm font-semibold text-surface-200 flex items-center gap-2">
+                             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                            {item.name}
+                          </h3>
+                          {item.accumulatedPercent !== undefined && (
+                            <span className="text-xs font-bold text-surface-400 bg-white px-2 py-0.5 rounded-md border border-surface-700/50 shadow-sm">
+                              {item.accumulatedPercent.toFixed(2)}%
+                            </span>
+                          )}
+                        </div>
                       </div>
 
                       <div className="divide-y divide-surface-700/30">

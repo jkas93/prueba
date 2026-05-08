@@ -44,7 +44,6 @@ export function useProjectProgress(
     return mainMap;
   }, [dailyProgress]);
 
-  // 3. Filtrar y estructurar datos para la fecha seleccionada
   const dataForSelectedDate = useMemo(() => {
     const dayMap = progressByDateMap.get(selectedDate);
     if (!dayMap) return [];
@@ -53,8 +52,35 @@ export function useProjectProgress(
 
     partidas.forEach((p) => {
       const itemsWithActivities: ItemProgress[] = [];
+      let partidaTotalWeight = 0;
+      let partidaAccumulatedGain = 0;
       
       p.items.forEach((item) => {
+        let itemTotalWeight = 0;
+        let itemAccumulatedGain = 0;
+        
+        // Calcular el progreso acumulado real del Item hasta la fecha seleccionada
+        item.activities.forEach((activity) => {
+          const actWeight = Number(activity.weight) || 0;
+          itemTotalWeight += actWeight;
+          partidaTotalWeight += actWeight;
+          
+          let actCumulative = 0;
+          dailyProgress.forEach(dp => {
+            if (dp.activity_id === activity.id && dp.date <= selectedDate) {
+              actCumulative += Number(dp.progress_percent);
+            }
+          });
+            
+          const clampedCumulative = Math.min(actCumulative, 100);
+          const actGain = (clampedCumulative / 100) * actWeight;
+          
+          itemAccumulatedGain += actGain;
+          partidaAccumulatedGain += actGain;
+        });
+
+        const itemAccumulatedPercent = itemTotalWeight > 0 ? (itemAccumulatedGain / itemTotalWeight) * 100 : 0;
+
         const validActivities = item.activities.map((activity) => {
           const todayProgress = dayMap.get(activity.id);
           
@@ -69,6 +95,13 @@ export function useProjectProgress(
 
           if (!hasContent) return null;
 
+          let actCumulative = 0;
+          dailyProgress.forEach(dp => {
+            if (dp.activity_id === activity.id && dp.date <= selectedDate) {
+              actCumulative += Number(dp.progress_percent);
+            }
+          });
+
           const actProgress: ActivityProgress = {
             id: activity.id,
             name: activity.name,
@@ -76,7 +109,8 @@ export function useProjectProgress(
             notes: todayProgress.notes,
             photos: todayProgress.photo_urls || [],
             hasRestriction: todayProgress.has_restriction || false,
-            restrictionReason: todayProgress.restriction_reason || ''
+            restrictionReason: todayProgress.restriction_reason || '',
+            accumulatedProgress: Math.min(actCumulative, 100)
           };
           return actProgress;
         }).filter((a): a is ActivityProgress => a !== null);
@@ -85,22 +119,26 @@ export function useProjectProgress(
           itemsWithActivities.push({ 
             id: item.id,
             name: item.name, 
-            activities: validActivities 
+            activities: validActivities,
+            accumulatedPercent: Math.round(itemAccumulatedPercent * 100) / 100
           });
         }
       });
+
+      const partidaAccumulatedPercent = partidaTotalWeight > 0 ? (partidaAccumulatedGain / partidaTotalWeight) * 100 : 0;
 
       if (itemsWithActivities.length > 0) {
         activePartidas.push({ 
           id: p.id,
           name: p.name, 
-          items: itemsWithActivities 
+          items: itemsWithActivities,
+          accumulatedPercent: Math.round(partidaAccumulatedPercent * 100) / 100
         });
       }
     });
 
     return activePartidas;
-  }, [partidas, progressByDateMap, selectedDate]);
+  }, [partidas, progressByDateMap, selectedDate, dailyProgress]);
 
   // 4. Calcular estadísticas de resumen
   const stats = useMemo(() => {

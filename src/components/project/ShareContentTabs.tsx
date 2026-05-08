@@ -91,6 +91,7 @@ export function ShareContentTabs({ project, partidas, dailyProgress, milestones 
               partidas={partidas || []}
               dailyProgress={dailyProgress}
               milestones={milestones}
+              showKPIs={false}
             />
           </section>
         )}

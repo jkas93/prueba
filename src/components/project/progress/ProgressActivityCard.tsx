@@ -13,7 +13,14 @@ export function ProgressActivityCard({ activity, onPhotoClick }: Props) {
       {/* Info & Badges */}
       <div className="flex-1">
         <div className="flex items-start justify-between gap-4 mb-3">
-          <h4 className="text-base font-bold text-surface-100">{activity.name}</h4>
+          <div>
+            <h4 className="text-base font-bold text-surface-100">{activity.name}</h4>
+            {activity.accumulatedProgress !== undefined && (
+              <p className="text-xs text-surface-300 font-medium mt-0.5">
+                Acumulado actual: <span className="text-primary-600 font-bold">{activity.accumulatedProgress.toFixed(2)}%</span>
+              </p>
+            )}
+          </div>
           {activity.progressToday > 0 && (
             <span className="shrink-0 inline-flex items-center justify-center px-3 py-1 rounded-full bg-accent-400/10 text-accent-600 font-bold border border-accent-400/20 shadow-sm text-sm whitespace-nowrap">
                + {activity.progressToday}% Hoy

@@ -163,17 +163,20 @@ export interface ActivityProgress {
   photos: string[];
   hasRestriction: boolean;
   restrictionReason: string | null;
+  accumulatedProgress?: number; // accumulated % (0-100)
 }
 
 export interface ItemProgress {
   id: string;
   name: string;
   activities: ActivityProgress[];
+  accumulatedPercent?: number; // accumulated relative to its weight
 }
 
 export interface PartidaProgress {
   id: string;
   name: string;
   items: ItemProgress[];
+  accumulatedPercent?: number; // accumulated relative to its weight
 }
 

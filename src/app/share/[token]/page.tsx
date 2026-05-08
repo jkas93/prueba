@@ -1,13 +1,13 @@
 import { createServerClient } from '@supabase/ssr';
-import { cookies } from 'next/headers';
 import { notFound } from 'next/navigation';
-import { GanttView } from '@/components/gantt/GanttView';
 import { ShareContentTabs } from '@/components/project/ShareContentTabs';
-import { format, parseISO } from 'date-fns';
+import { format, parseISO, differenceInDays } from 'date-fns';
+import { calculateSCurve } from '@/lib/scurve';
 import { es } from 'date-fns/locale';
 import type { Metadata } from 'next';
 
-export const dynamic = 'force-dynamic';
+export const revalidate = 60; // ISR cache por 60 segundos
+export const dynamicParams = true;
 
 interface Props {
   params: Promise<{ token: string }>;
@@ -23,13 +23,18 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
   const { data: project } = await supabase
     .from('projects')
-    .select('name')
+    .select('name, description')
     .eq('share_token', token)
     .single();
 
   return {
     title: project ? `${project.name} — Avance del Proyecto` : 'Proyecto no encontrado',
-    description: 'Vista pública del avance del proyecto.',
+    description: project?.description || 'Vista pública del avance del proyecto y métricas de ejecución.',
+    openGraph: {
+      title: project ? `${project.name} — Avance del Proyecto` : 'Proyecto no encontrado',
+      description: project?.description || 'Consulta el avance actualizado de este proyecto.',
+      type: 'website',
+    }
   };
 }
 
@@ -40,16 +45,15 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 export default async function SharePage({ params }: Props) {
   const { token } = await params;
 
-  // Usa el cliente normal para permitir que las validaciones de Supabase
-  // por lo menos usen tu Cookie de sesión local si estás testeando en tu PC y saltar RLS transitoriamente.
+  // Para permitir ISR (Static Generation con revalidate) NO debemos usar cookies().
+  // La página se generará estáticamente en el servidor cada 60 segundos.
   // Nota: Para clientes externos se comportará como anónimo, así que el fix en Supabase (public_read_access_fix.sql) es MANDATORIO a largo plazo.
-  const cookieStore = await cookies();
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co',
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder',
     {
       cookies: {
-        getAll: () => cookieStore.getAll(),
+        getAll: () => [],
         setAll: () => { }
       }
     }
@@ -110,6 +114,20 @@ export default async function SharePage({ params }: Props) {
   // It's a silent RLS row level security drop.
   const isRLSBlocked = !partidasError && partidas?.length === 0;
 
+  // Calculate SCurve Data for Executive Summary
+  const flatActivities = (partidas || [])
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .flatMap((p: any) => p.items || [])
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .flatMap((i: any) => i.activities || []);
+
+  const scurveData = calculateSCurve(
+    project.start_date,
+    project.end_date,
+    flatActivities,
+    dailyProgress
+  );
+
   return (
     <main className="min-h-screen p-4 md:p-6 lg:p-8 bg-surface-50">
       <div className="max-w-[1600px] w-full mx-auto fade-in">
@@ -123,7 +141,7 @@ export default async function SharePage({ params }: Props) {
             <p className="mt-2 text-sm text-red-600/90">
               La solicitud de este enlace externo al servidor fue rechazada. Supabase bloquea por defecto la lectura de tus tareas (0 partidas recibidas) mediante sus Políticas RLS para usuarios externos sin cuenta (Anonymous). <br /><br />
               <strong>¡OBLIGATORIO PARA PRODUCCIÓN!</strong> <br />
-              Para solucionarlo: En el archivo del proyecto <strong><code>public_read_access_fix.sql</code></strong>, copia todo el SQL que he programado y córrelo en la pestaña "SQL Editor" de tu plataforma Supabase. Eso deseará acceso de lectura "Reader" a cualquier invitado válido que porte un Link seguro.
+              Para solucionarlo: En el archivo del proyecto <strong><code>public_read_access_fix.sql</code></strong>, copia todo el SQL que he programado y córrelo en la pestaña &quot;SQL Editor&quot; de tu plataforma Supabase. Eso deseará acceso de lectura &quot;Reader&quot; a cualquier invitado válido que porte un Link seguro.
             </p>
           </div>
         )}
@@ -150,6 +168,37 @@ export default async function SharePage({ params }: Props) {
             <div className="text-xs text-surface-200/60 font-medium">
               {format(parseISO(project.start_date), 'dd MMM yyyy', { locale: es })} → {format(parseISO(project.end_date), 'dd MMM yyyy', { locale: es })}
             </div>
+          </div>
+        </div>
+
+        {/* Resumen Ejecutivo */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+          <div className="bg-white p-4 rounded-xl border border-surface-700 shadow-sm flex flex-col justify-center">
+            <span className="text-[10px] uppercase tracking-wider text-surface-200 font-bold mb-1">Avance Programado</span>
+            <span className="text-2xl font-bold text-surface-100">{scurveData.currentPlanned}%</span>
+          </div>
+          <div className="bg-white p-4 rounded-xl border border-surface-700 shadow-sm flex flex-col justify-center">
+            <span className="text-[10px] uppercase tracking-wider text-surface-200 font-bold mb-1">Avance Real</span>
+            <span className={`text-2xl font-bold ${scurveData.currentActual >= scurveData.currentPlanned ? 'text-success-600' : 'text-danger-600'}`}>
+              {scurveData.currentActual}%
+            </span>
+          </div>
+          <div className="bg-white p-4 rounded-xl border border-surface-700 shadow-sm flex flex-col justify-center">
+            <span className="text-[10px] uppercase tracking-wider text-surface-200 font-bold mb-1">Estado (SPI)</span>
+            <div className="flex items-center gap-2">
+              <span className={`text-2xl font-bold ${scurveData.spiIndex >= 1 ? 'text-success-600' : scurveData.spiIndex >= 0.9 ? 'text-warning-600' : 'text-danger-600'}`}>
+                {scurveData.spiIndex.toFixed(2)}
+              </span>
+              <span className={`text-[10px] px-2 py-0.5 rounded-md font-bold ${scurveData.spiIndex >= 1 ? 'bg-success-50 text-success-700 border border-success-200' : scurveData.spiIndex >= 0.9 ? 'bg-warning-50 text-warning-700 border border-warning-200' : 'bg-danger-50 text-danger-700 border border-danger-200'}`}>
+                {scurveData.spiIndex >= 1 ? 'Adelantado' : scurveData.spiIndex >= 0.9 ? 'En Riesgo' : 'Retrasado'}
+              </span>
+            </div>
+          </div>
+          <div className="bg-white p-4 rounded-xl border border-surface-700 shadow-sm flex flex-col justify-center">
+            <span className="text-[10px] uppercase tracking-wider text-surface-200 font-bold mb-1">Días Restantes</span>
+            <span className="text-2xl font-bold text-surface-100">
+              {Math.max(0, differenceInDays(parseISO(project.end_date), new Date()))}
+            </span>
           </div>
         </div>
 

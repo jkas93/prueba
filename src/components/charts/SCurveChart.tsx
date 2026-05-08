@@ -23,6 +23,7 @@ interface Props {
   dailyProgress: DailyProgress[];
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
   milestones: any[];
+  showKPIs?: boolean;
 }
 
 interface CustomTooltipProps {
@@ -74,7 +75,7 @@ const CustomTooltip = ({ active, payload, label, todayStr }: CustomTooltipProps)
   return null;
 };
 
-export function SCurveChart({ project, partidas, dailyProgress, milestones }: Props) {
+export function SCurveChart({ project, partidas, dailyProgress, milestones, showKPIs = true }: Props) {
   const chartRef = useRef<HTMLDivElement>(null);
 
   // Flatten activities from nested partidas
@@ -166,26 +167,28 @@ export function SCurveChart({ project, partidas, dailyProgress, milestones }: Pr
 
   return (
     <div>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <div className="glass-card p-4 text-center">
-          <p className="text-xs text-surface-200/60 mb-1">Avance Planificado</p>
-          <p className="text-2xl font-bold text-primary-300">{scurveData.currentPlanned.toFixed(1)}%</p>
+      {showKPIs && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+          <div className="glass-card p-4 text-center">
+            <p className="text-xs text-surface-200/60 mb-1">Avance Planificado</p>
+            <p className="text-2xl font-bold text-primary-300">{scurveData.currentPlanned.toFixed(1)}%</p>
+          </div>
+          <div className="glass-card p-4 text-center">
+            <p className="text-xs text-surface-200/60 mb-1">Avance Real</p>
+            <p className="text-2xl font-bold text-accent-400">{scurveData.currentActual.toFixed(1)}%</p>
+          </div>
+          <div className="glass-card p-4 text-center">
+            <p className="text-xs text-surface-200/60 mb-1">Desviación</p>
+            <p className={`text-2xl font-bold ${deviation >= 0 ? 'text-accent-400' : 'text-danger-400'}`}>
+              {deviation >= 0 ? '+' : ''}{deviation.toFixed(1)}%
+            </p>
+          </div>
+          <div className="glass-card p-4 text-center">
+            <p className="text-xs text-surface-200/60 mb-1">SPI (Índice)</p>
+            <p className={`text-2xl font-bold ${spiColor}`}>{scurveData.spiIndex.toFixed(2)}</p>
+          </div>
         </div>
-        <div className="glass-card p-4 text-center">
-          <p className="text-xs text-surface-200/60 mb-1">Avance Real</p>
-          <p className="text-2xl font-bold text-accent-400">{scurveData.currentActual.toFixed(1)}%</p>
-        </div>
-        <div className="glass-card p-4 text-center">
-          <p className="text-xs text-surface-200/60 mb-1">Desviación</p>
-          <p className={`text-2xl font-bold ${deviation >= 0 ? 'text-accent-400' : 'text-danger-400'}`}>
-            {deviation >= 0 ? '+' : ''}{deviation.toFixed(1)}%
-          </p>
-        </div>
-        <div className="glass-card p-4 text-center">
-          <p className="text-xs text-surface-200/60 mb-1">SPI (Índice)</p>
-          <p className={`text-2xl font-bold ${spiColor}`}>{scurveData.spiIndex.toFixed(2)}</p>
-        </div>
-      </div>
+      )}
 
       <div className="glass-card p-6 relative">
         <div className="flex justify-between items-center mb-4">
