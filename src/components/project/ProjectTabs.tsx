@@ -1,6 +1,5 @@
 'use client';
 
-import { useState, useEffect } from 'react';
 import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 import type { Project, Alert } from '@/lib/types';
 import { GanttView } from '@/components/gantt/GanttView';
@@ -34,22 +33,12 @@ export function ProjectTabs({ project, partidas, dailyProgress, alerts, mileston
   const router = useRouter();
   const pathname = usePathname();
 
-  // Leer pestaña activa desde la URL, con fallback a 'gantt'
+  // Derivar pestaña activa directamente de la URL (sin useState)
   const tabFromUrl = searchParams.get('tab') as TabId | null;
-  const initialTab = tabFromUrl && VALID_TABS.includes(tabFromUrl) ? tabFromUrl : 'gantt';
-  const [activeTab, setActiveTab] = useState<TabId>(initialTab);
+  const activeTab: TabId = tabFromUrl && VALID_TABS.includes(tabFromUrl) ? tabFromUrl : 'gantt';
 
-  // Sincronizar con URL cuando cambia el search param (ej. tras router.refresh())
-  useEffect(() => {
-    const currentTab = searchParams.get('tab') as TabId | null;
-    if (currentTab && VALID_TABS.includes(currentTab) && currentTab !== activeTab) {
-      setActiveTab(currentTab);
-    }
-  }, [searchParams, activeTab]);
-
-  // Cambiar pestaña y actualizar URL sin recargar
+  // Cambiar pestaña actualizando la URL (activeTab se deriva automáticamente)
   const handleTabChange = (tabId: TabId) => {
-    setActiveTab(tabId);
     const params = new URLSearchParams(searchParams.toString());
     params.set('tab', tabId);
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
