@@ -91,6 +91,8 @@ export function buildTasksFromPartidas(
           parent: `i_${item.id}`,
           start_date: activity.start_date,
           end_date: activity.end_date ? toGanttEndDate(activity.end_date) : null,
+          planned_start: activity.baseline_start || null,
+          planned_end: activity.baseline_end ? toGanttEndDate(activity.baseline_end) : null,
           weight: activity.weight || 1,
           progress: progress,
           color: '#F7C20E',

@@ -53,6 +53,8 @@ export interface Activity {
   name: string;
   start_date: string;
   end_date: string;
+  baseline_start?: string | null;
+  baseline_end?: string | null;
   weight: number;
   sort_order: number;
   created_at: string;

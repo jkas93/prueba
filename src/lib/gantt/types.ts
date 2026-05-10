@@ -12,6 +12,8 @@ export interface GanttTaskData {
   db_id: string;
   color?: string;
   textColor?: string;
+  planned_start?: string | null;
+  planned_end?: string | null;
   progress?: number;
   progressColor?: string;
   weight?: number;

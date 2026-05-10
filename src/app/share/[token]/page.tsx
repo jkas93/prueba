@@ -121,9 +121,26 @@ export default async function SharePage({ params }: Props) {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
     .flatMap((i: any) => i.activities || []);
 
+  let effectiveStart = project.start_date;
+  let effectiveEnd = project.end_date;
+  if (flatActivities.length > 0) {
+    const actStarts = flatActivities.map(a => a.start_date).filter(Boolean);
+    const actEnds = flatActivities.map(a => a.end_date).filter(Boolean);
+    if (actStarts.length > 0) {
+      const minStart = actStarts.sort()[0];
+      if (minStart < effectiveStart) effectiveStart = minStart;
+    }
+    if (actEnds.length > 0) {
+      const maxEnd = actEnds.sort().reverse()[0];
+      if (maxEnd > effectiveEnd) effectiveEnd = maxEnd;
+    }
+  }
+
+  const effectiveProject = { ...project, start_date: effectiveStart, end_date: effectiveEnd };
+
   const scurveData = calculateSCurve(
-    project.start_date,
-    project.end_date,
+    effectiveStart,
+    effectiveEnd,
     flatActivities,
     dailyProgress
   );
@@ -166,7 +183,7 @@ export default async function SharePage({ params }: Props) {
               Vista de Cliente — Solo Lectura
             </span>
             <div className="text-xs text-surface-200/60 font-medium">
-              {format(parseISO(project.start_date), 'dd MMM yyyy', { locale: es })} → {format(parseISO(project.end_date), 'dd MMM yyyy', { locale: es })}
+              {format(parseISO(effectiveStart), 'dd MMM yyyy', { locale: es })} → {format(parseISO(effectiveEnd), 'dd MMM yyyy', { locale: es })}
             </div>
           </div>
         </div>
@@ -197,14 +214,14 @@ export default async function SharePage({ params }: Props) {
           <div className="bg-white p-4 rounded-xl border border-surface-700 shadow-sm flex flex-col justify-center">
             <span className="text-[10px] uppercase tracking-wider text-surface-200 font-bold mb-1">Días Restantes</span>
             <span className="text-2xl font-bold text-surface-100">
-              {Math.max(0, differenceInDays(parseISO(project.end_date), new Date()))}
+              {Math.max(0, differenceInDays(parseISO(effectiveEnd), new Date()))}
             </span>
           </div>
         </div>
 
         <div className="mt-8">
           <ShareContentTabs 
-            project={project} 
+            project={effectiveProject} 
             partidas={partidas || []} 
             dailyProgress={dailyProgress} 
             milestones={milestones || []}

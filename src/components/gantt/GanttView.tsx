@@ -7,12 +7,14 @@ import { PartidaWithItems, DailyProgress } from '@/lib/types';
 import { GanttDbType } from '@/lib/gantt/types';
 import { buildProgressMap, buildTasksFromPartidas } from '@/lib/gantt/progress-utils';
 import { useGanttCRUD } from '@/hooks/useGanttCRUD';
+import { setProjectBaseline } from '@/app/actions/baseline';
 
 import { GanttChart } from './GanttChart';
 import { GanttSidebar } from './GanttSidebar';
 import { ImportExcelButton } from './ImportExcelButton';
 import { MilestoneModal } from './MilestoneModal';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
+import Script from 'next/script';
 import 'dhtmlx-gantt/codebase/dhtmlxgantt.css';
 
 interface Props {
@@ -29,6 +31,7 @@ export function GanttView({ projectId, partidas, dailyProgress = [], readonly = 
   const [zoomLevel, setZoomLevel] = useState('day');
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isOwner, setIsOwner] = useState(false);
+  const [isSettingBaseline, setIsSettingBaseline] = useState(false);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const ganttRef = useRef<any>(null);
@@ -88,8 +91,37 @@ export function GanttView({ projectId, partidas, dailyProgress = [], readonly = 
     }
   };
 
+  const handleSetBaseline = async () => {
+    if (!window.confirm('¿Estás seguro de establecer las fechas actuales como Línea Base?\nEsto sobrescribirá cualquier línea base anterior y permitirá calcular la variación.')) return;
+    setIsSettingBaseline(true);
+    const res = await setProjectBaseline(projectId);
+    if (res.success) {
+      alert('Línea base guardada correctamente.');
+      router.refresh();
+    } else {
+      alert(res.error || 'Ocurrió un error al guardar la línea base.');
+    }
+    setIsSettingBaseline(false);
+  };
+
+  const handleExportMSProject = () => {
+    if (ganttRef.current) {
+      // Export expects exportToMSProject method from export module (which is a global gantt plugin)
+      // Usually gantt.exportToMSProject exists if the export api is included
+      if (typeof ganttRef.current.exportToMSProject === 'function') {
+        ganttRef.current.exportToMSProject({
+          name: `Cronograma_${projectId}.xml`,
+          skip_circular_links: false
+        });
+      } else {
+        alert('El servicio de exportación a MS Project no está disponible o cargado.');
+      }
+    }
+  };
+
   return (
     <>
+      <Script src="https://export.dhtmlx.com/gantt/api.js" strategy="lazyOnload" />
       <div className={isFullscreen ? "fixed inset-0 z-[100] bg-surface-50 p-2 md:p-4 flex flex-col h-screen w-screen" : "flex flex-col h-full"}>
         {/* Top Controls Bar */}
         <div className="flex flex-row items-center gap-3 mb-4 shrink-0 overflow-x-auto scrollbar-hide py-1">
@@ -126,6 +158,30 @@ export function GanttView({ projectId, partidas, dailyProgress = [], readonly = 
             </button>
             
             <div className="w-px h-6 bg-surface-700/50 mx-1 flex-shrink-0"></div>
+            
+            {/* Export MS Project is always available (even public) */}
+            <button 
+              onClick={handleExportMSProject} 
+              className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] md:text-xs font-bold text-[#107c41] bg-[#107c41]/10 border border-[#107c41]/30 rounded-md shadow-sm hover:bg-[#107c41]/20 transition-all"
+              title="Exportar a MS Project (incluye Línea Base)"
+            >
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zm0 2v14h14V5H5zm2 2h3v2H7V7zm0 3h3v2H7v-2zm0 3h3v2H7v-2zm4-6h4v2h-4V7zm0 3h4v2h-4v-2zm0 3h4v2h-4v-2z"/>
+              </svg>
+              <span>Exportar MS Project</span>
+            </button>
+
+            {!readonly && isOwner && (
+              <button 
+                onClick={handleSetBaseline} 
+                disabled={isSettingBaseline}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] md:text-xs font-bold text-accent-500 bg-accent-500/10 border border-accent-500/30 rounded-md shadow-sm hover:bg-accent-500/20 transition-all disabled:opacity-50"
+              >
+                {isSettingBaseline ? 'Guardando...' : 'Fijar Línea Base'}
+              </button>
+            )}
+
+            {!readonly && <div className="w-px h-6 bg-surface-700/50 mx-1 flex-shrink-0"></div>}
             {!readonly && <MilestoneModal projectId={projectId} isOwner={isOwner} onUpdate={() => router.refresh()} />}
             {!readonly && <ImportExcelButton projectId={projectId} />}
           </div>

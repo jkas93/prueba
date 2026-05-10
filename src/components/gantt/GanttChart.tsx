@@ -98,6 +98,9 @@ export function GanttChart({
 
       gantt.init(containerRef.current);
       ganttRef.current = gantt;
+      // Attach to window so the public export API (api.js) can use it
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (window as any).gantt = gantt;
 
       // Task Clicks
       gantt.attachEvent("onTaskClick", (id: string, e: Event) => {
