@@ -1,179 +1,124 @@
 'use server';
 
-import { createClient } from '@/lib/supabase/server';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { adminDb, adminAuth } from '@/lib/firebase/server';
 import { requireSuperadmin } from '@/lib/auth/guards';
 import { revalidatePath } from 'next/cache';
 
-// ─── Crear cuenta de usuario (por invitación email) ───
+type UserRecord = {
+  id: string;
+  full_name: string;
+  avatar_url: string;
+  system_role: 'user' | 'superadmin';
+  email: string;
+  created_at: string;
+  projects: { name: string; role: string }[];
+};
+
+// ─── Invitar usuario (crear con email) ───
 export async function inviteUser(email: string, fullName: string) {
   await requireSuperadmin();
-  const adminSupabase = createAdminClient();
-  
-  // Supabase envía un email de invitación automáticamente
-  // El usuario elige su propia contraseña al hacer clic en el link
-  const { data, error } = await adminSupabase.auth.admin.inviteUserByEmail(email, {
-    data: { full_name: fullName },
-    redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/auth/callback`
-  });
-  
-  if (error) throw new Error(error.message);
-  
-  // Registrar en auditoría
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (user && data.user) {
-    await supabase.from('admin_audit_log').insert({
-      actor_id: user.id,
-      action: 'invite_user',
-      target_type: 'user',
-      target_id: data.user.id,
-      details: { email, full_name: fullName }
+
+  try {
+    // Create a Firebase Auth user without a password (they'll use email link / set password later)
+    const newUser = await adminAuth.createUser({
+      email,
+      displayName: fullName,
     });
+
+    // Create Firestore profile
+    await adminDb.collection('users').doc(newUser.uid).set({
+      full_name: fullName,
+      avatar_url: '',
+      system_role: 'user',
+      created_at: new Date().toISOString(),
+    });
+
+    // Generate a password reset link so the user can set their password
+    await adminAuth.generatePasswordResetLink(email);
+
+    revalidatePath('/admin');
+    return { success: true, userId: newUser.uid };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(message);
   }
-  
-  revalidatePath('/admin');
-  return { success: true, userId: data.user?.id };
 }
 
 // ─── Cambiar system_role de un usuario ───
 export async function updateSystemRole(targetUserId: string, newRole: 'user' | 'superadmin') {
   await requireSuperadmin();
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
 
-  // No puede cambiar su propio rol
-  if (user!.id === targetUserId) {
-    throw new Error('No puedes cambiar tu propio rol de sistema.');
-  }
+  const targetSnap = await adminDb.collection('users').doc(targetUserId).get();
+  if (!targetSnap.exists) throw new Error('Usuario no encontrado.');
 
-  // Obtener rol actual para auditoría
-  const { data: target } = await supabase
-    .from('profiles')
-    .select('system_role')
-    .eq('id', targetUserId)
-    .single();
+  await adminDb.collection('users').doc(targetUserId).update({ system_role: newRole });
 
-  const { error } = await supabase
-    .from('profiles')
-    .update({ system_role: newRole })
-    .eq('id', targetUserId);
-    
-  if (error) throw new Error(error.message);
-
-  // Auditoría
-  await supabase.from('admin_audit_log').insert({
-    actor_id: user!.id,
-    action: 'change_system_role',
-    target_type: 'system_role',
-    target_id: targetUserId,
-    details: { old_role: target?.system_role, new_role: newRole }
-  });
-  
   revalidatePath('/admin');
 }
 
-// ─── Obtener TODOS los proyectos (para dashboard admin) ───
-export async function getAllProjects() {
-  await requireSuperadmin();
-  const supabase = await createClient();
-  // RLS ampliado permite ver todos los proyectos
-  const { data, error } = await supabase
-    .from('projects')
-    .select('*, owner:owner_id(full_name, email:id)') 
-    .order('created_at', { ascending: false });
-    
-  if (error) throw new Error(error.message);
-  return data;
-}
-
 // ─── Obtener TODOS los usuarios ───
-export async function getAllUsers() {
+export async function getAllUsers(): Promise<UserRecord[]> {
   await requireSuperadmin();
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from('profiles')
-    .select('id, full_name, avatar_url, system_role, created_at')
-    .order('created_at', { ascending: false });
-    
-  if (error) throw new Error(error.message);
 
-  const { data: allMembersData } = await supabase
-    .from('project_members')
-    .select('user_id, role, projects(name)');
+  const usersSnap = await adminDb.collection('users').orderBy('created_at', 'desc').get();
+  const projectsSnap = await adminDb.collection('projects').get();
 
-  const { data: allOwnedProjects } = await supabase
-    .from('projects')
-    .select('owner_id, name');
-  
-  // Vamos a añadir el email desde la db o auth
-  const adminSupabase = createAdminClient();
-  const usersWithEmailAndProjects = await Promise.all(data.map(async (u) => {
-    const { data: authUser } = await adminSupabase.auth.admin.getUserById(u.id);
-
-    const memberOf = (allMembersData || [])
-      .filter((m: { user_id: string; projects: unknown }) => m.user_id === u.id && m.projects)
-      .map((m: { role: string; projects: { name?: string } | { name?: string }[] | null }) => ({
-        name: (Array.isArray(m.projects) ? m.projects[0]?.name : m.projects?.name) ?? '',
-        role: m.role
-      }))
-      .filter((p) => p.name !== '');
-
-    const owned = (allOwnedProjects || [])
-      .filter((p: { owner_id: string }) => p.owner_id === u.id)
-      .map((p: { name: string }) => ({
-        name: p.name,
-        role: 'owner'
-      }));
-
-    const combinedProjects = [...owned, ...memberOf];
-
-    // remove duplicates by name just in case
-    const uniqueProjects = Array.from(new Map(combinedProjects.map(item => [item.name, item])).values());
-
-    return {
-      ...u,
-      email: authUser.user?.email || 'Desconocido',
-      projects: uniqueProjects
-    };
+  const projects = projectsSnap.docs.map(d => ({ id: d.id, ...d.data() } as {
+    id: string; name: string; owner_id: string; members?: string[]
   }));
-  
-  return usersWithEmailAndProjects;
+
+  const usersWithData = await Promise.all(
+    usersSnap.docs.map(async (docSnap) => {
+      const userData = docSnap.data();
+      let email = 'Desconocido';
+      try {
+        const authUser = await adminAuth.getUser(docSnap.id);
+        email = authUser.email || 'Desconocido';
+      } catch {
+        // user may not exist in Auth
+      }
+
+      const ownedProjects = projects
+        .filter(p => p.owner_id === docSnap.id)
+        .map(p => ({ name: p.name, role: 'owner' }));
+
+      const memberProjects = projects
+        .filter(p => p.owner_id !== docSnap.id && p.members?.includes(docSnap.id))
+        .map(p => ({ name: p.name, role: 'member' }));
+
+      const uniqueProjects = Array.from(
+        new Map([...ownedProjects, ...memberProjects].map(p => [p.name, p])).values()
+      );
+
+      return {
+        id: docSnap.id,
+        full_name: userData.full_name || '',
+        avatar_url: userData.avatar_url || '',
+        system_role: (userData.system_role || 'user') as 'user' | 'superadmin',
+        email,
+        created_at: userData.created_at || '',
+        projects: uniqueProjects,
+      };
+    })
+  );
+
+  return usersWithData;
 }
 
 // ─── Eliminar usuario ───
 export async function deleteUser(targetUserId: string) {
   await requireSuperadmin();
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (user!.id === targetUserId) {
-    throw new Error('No puedes eliminar tu propia cuenta de superadministrador.');
-  }
 
   // Prevenir eliminación si el usuario es dueño de proyectos
-  const { count } = await supabase
-    .from('projects')
-    .select('*', { count: 'exact', head: true })
-    .eq('owner_id', targetUserId);
+  const ownedSnap = await adminDb.collection('projects').where('owner_id', '==', targetUserId).count().get();
+  const count = ownedSnap.data().count;
 
-  if (count && count > 0) {
+  if (count > 0) {
     throw new Error(`El usuario posee ${count} proyecto(s). Debes eliminar o transferir sus proyectos antes de borrar su cuenta.`);
   }
 
-  // Ejecutar borrado permanente vía Supabase Admin
-  const adminSupabase = createAdminClient();
-  const { error } = await adminSupabase.auth.admin.deleteUser(targetUserId);
-  if (error) throw new Error('Error al eliminar cuenta: ' + error.message);
-
-  // Auditoría
-  await supabase.from('admin_audit_log').insert({
-    actor_id: user!.id,
-    action: 'delete_user',
-    target_type: 'user',
-    target_id: targetUserId,
-    details: { removed_id: targetUserId }
-  });
+  await adminAuth.deleteUser(targetUserId);
+  await adminDb.collection('users').doc(targetUserId).delete();
 
   revalidatePath('/admin');
 }

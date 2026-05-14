@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { createClient } from '@/lib/supabase/client';
+import { useFirebase } from '@/hooks/useFirebase';
+import { doc, updateDoc } from 'firebase/firestore';
 import { useRouter } from 'next/navigation';
 
 interface ShareModalProps {
@@ -16,7 +17,7 @@ export function ShareModal({ projectId, initialToken, projectName, variant = 'bu
   const [token, setToken] = useState<string | null>(initialToken);
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
-  const supabase = createClient();
+  const { db } = useFirebase();
   const router = useRouter();
 
   // Reset copied state when modal closes
@@ -45,12 +46,9 @@ export function ShareModal({ projectId, initialToken, projectName, variant = 'bu
   const updateShareToken = async (newToken: string | null) => {
     setLoading(true);
     try {
-      const { error } = await supabase
-        .from('projects')
-        .update({ share_token: newToken })
-        .eq('id', projectId);
-
-      if (error) throw error;
+      await updateDoc(doc(db, 'projects', projectId), {
+        share_token: newToken
+      });
       setToken(newToken);
       router.refresh();
     } catch (err) {

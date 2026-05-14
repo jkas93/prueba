@@ -1,9 +1,10 @@
 import { useCallback } from 'react';
-import { useSupabase } from './useSupabase';
+import { useFirebase } from './useFirebase';
+import { collection, query, where, getDocs } from 'firebase/firestore';
 import { format } from 'date-fns';
 
 export function useGanttMarkers() {
-  const supabase = useSupabase();
+  const { db } = useFirebase();
 
   /**
    * Carga los hitos del proyecto y agrega tanto los hitos como el marcador de "HOY".
@@ -25,13 +26,13 @@ export function useGanttMarkers() {
         if (deleteMarker) deleteMarker(m.id);
       });
 
-      // 2. Fetch milestones from Supabase
-      const { data: milestones, error } = await supabase
-        .from('project_milestones')
-        .select('*')
-        .eq('project_id', projectId);
-
-      if (error) {
+      // 2. Fetch milestones from Firebase (note: project_milestones wasn't in the migration script, but let's query it anyway)
+      let milestones: any[] = [];
+      try {
+        const q = query(collection(db, 'project_milestones'), where('project_id', '==', projectId));
+        const snapshot = await getDocs(q);
+        milestones = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      } catch (error) {
         console.error('Error fetching milestones for markers:', error);
       }
 
@@ -55,7 +56,7 @@ export function useGanttMarkers() {
 
       // 4. Agregar marcadores Hitos
       if (milestones && milestones.length > 0) {
-        milestones.forEach((ms) => {
+        milestones.forEach((ms: any) => {
           // Parseamos la fecha evitando el salto a UTC mediante el asenso a mediodía local
           let msDate = new Date(ms.date);
           if (ms.date.includes('-')) {
@@ -87,7 +88,7 @@ export function useGanttMarkers() {
     } catch (err) {
       console.error('Failed to sync markers:', err);
     }
-  }, [supabase]);
+  }, [db]);
 
   return {
     syncMarkers

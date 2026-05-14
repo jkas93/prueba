@@ -1,6 +1,7 @@
 'use client';
 
-import { useSearchParams, useRouter, usePathname } from 'next/navigation';
+import { useState } from 'react';
+import { useSearchParams, usePathname } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import type { Project, Alert } from '@/lib/types';
 
@@ -49,18 +50,16 @@ const tabs = [
 
 export function ProjectTabs({ project, partidas, dailyProgress, alerts, milestones }: Props) {
   const searchParams = useSearchParams();
-  const router = useRouter();
   const pathname = usePathname();
 
-  // Derivar pestaña activa directamente de la URL (sin useState)
   const tabFromUrl = searchParams.get('tab') as TabId | null;
-  const activeTab: TabId = tabFromUrl && VALID_TABS.includes(tabFromUrl) ? tabFromUrl : 'gantt';
+  const [activeTab, setActiveTab] = useState<TabId>(tabFromUrl && VALID_TABS.includes(tabFromUrl) ? tabFromUrl : 'gantt');
 
-  // Cambiar pestaña actualizando la URL (activeTab se deriva automáticamente)
   const handleTabChange = (tabId: TabId) => {
-    const params = new URLSearchParams(searchParams.toString());
+    setActiveTab(tabId);
+    const params = new URLSearchParams(window.location.search);
     params.set('tab', tabId);
-    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+    window.history.replaceState(null, '', `${pathname}?${params.toString()}`);
   };
 
   // Count unread alerts

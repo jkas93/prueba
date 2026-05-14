@@ -1,8 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { createClient } from '@/lib/supabase/client';
-import { useRouter } from 'next/navigation';
+import { useFirebase } from '@/hooks/useFirebase';
+import { doc, updateDoc, writeBatch } from 'firebase/firestore';
 import type { Alert } from '@/lib/types';
 
 interface Props {
@@ -38,19 +38,16 @@ const severityConfig = {
  * AlertBanner — Displays project alerts with severity-based styling.
  * Allows marking individual alerts as read.
  */
-export function AlertBanner({ alerts, projectId }: Props) {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export function AlertBanner({ alerts, projectId: _projectId }: Props) {
   const [localAlerts, setLocalAlerts] = useState(alerts);
   const [filterSeverity, setFilterSeverity] = useState<string>('all');
   const [filterType, setFilterType] = useState<string>('all');
   const [filterRead, setFilterRead] = useState<string>('all');
-  const supabase = createClient();
-  const router = useRouter();
+  const { db } = useFirebase();
 
   const markAsRead = async (alertId: string) => {
-    await supabase
-      .from('alerts')
-      .update({ is_read: true })
-      .eq('id', alertId);
+    await updateDoc(doc(db, 'alerts', alertId), { is_read: true });
 
     setLocalAlerts((prev) =>
       prev.map((a) => (a.id === alertId ? { ...a, is_read: true } : a))
@@ -58,11 +55,14 @@ export function AlertBanner({ alerts, projectId }: Props) {
   };
 
   const markAllAsRead = async () => {
-    await supabase
-      .from('alerts')
-      .update({ is_read: true })
-      .eq('project_id', projectId)
-      .eq('is_read', false);
+    const batch = writeBatch(db);
+    const unreadAlerts = localAlerts.filter(a => !a.is_read);
+    
+    unreadAlerts.forEach(a => {
+      batch.update(doc(db, 'alerts', a.id), { is_read: true });
+    });
+    
+    await batch.commit();
 
     setLocalAlerts((prev) => prev.map((a) => ({ ...a, is_read: true })));
   };

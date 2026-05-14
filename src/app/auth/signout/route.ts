@@ -1,14 +1,7 @@
-import { createClient } from '@/lib/supabase/server';
-import { NextResponse, type NextRequest } from 'next/server';
+import { NextResponse } from 'next/server';
 
-/**
- * Sign out route — clears the session and redirects to login.
- */
-export const runtime = 'edge';
-
-export async function POST(request: NextRequest) {
-  const supabase = await createClient();
-  await supabase.auth.signOut();
-  const origin = request.nextUrl.origin;
-  return NextResponse.redirect(new URL('/login', origin), { status: 303 });
+// next-firebase-auth-edge intercepta /api/logout, 
+// pero dejamos esta ruta por si algún componente antiguo la llama.
+export async function POST() {
+  return NextResponse.redirect(new URL('/login', 'http://localhost:3000'));
 }

@@ -1,52 +1,59 @@
 'use server';
 
-import { createClient } from '@/lib/supabase/server';
+import { adminDb } from '@/lib/firebase/server';
 import { evaluateAlerts, saveAlerts } from '@/lib/alerts';
+import type { Activity, DailyProgress } from '@/lib/types';
 
+type GanttElement = {
+  id: string;
+  type: 'partida' | 'item' | 'activity';
+  project_id: string;
+  name: string;
+  start_date?: string;
+  end_date?: string;
+  weight?: number;
+  parent_id?: string | null;
+  sort_order?: number;
+};
 
 export async function triggerProjectAlerts(projectId: string) {
-  const supabase = await createClient();
-
   // 1. Fetch project
-  const { data: project } = await supabase
-    .from('projects')
-    .select('*')
-    .eq('id', projectId)
-    .single();
+  const projectSnap = await adminDb.collection('projects').doc(projectId).get();
+  if (!projectSnap.exists) return;
+  const project = projectSnap.data() as { start_date: string; end_date: string };
 
-  if (!project) return;
+  // 2. Fetch all gantt elements and extract activities
+  const ganttSnap = await adminDb
+    .collection('gantt_elements')
+    .where('project_id', '==', projectId)
+    .get();
 
-  // 2. Fetch all activities
-  const { data: partidas } = await supabase
-    .from('partidas')
-    .select(`
-      id,
-      items (
-        id,
-        activities (*)
-      )
-    `)
-    .eq('project_id', projectId);
+  const ganttElements = ganttSnap.docs.map(
+    (docSnap) => ({ id: docSnap.id, ...docSnap.data() } as GanttElement)
+  );
 
-  const activities = (partidas || [])
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .flatMap((p: any) => p.items || [])
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .flatMap((i: any) => i.activities || []);
+  const activities = ganttElements.filter(
+    (e): e is GanttElement & { type: 'activity' } => e.type === 'activity'
+  ) as unknown as Activity[];
 
-  // 3. Fetch all daily progress
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const activityIds = activities.map((a: any) => a.id);
-  
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let dailyProgress: any[] = [];
+  // 3. Fetch all daily progress (chunk by 10 due to Firestore 'in' limit)
+  const activityIds = activities.map((a) => (a as Activity).id);
+
+  let dailyProgress: DailyProgress[] = [];
   if (activityIds.length > 0) {
-    const { data } = await supabase
-      .from('daily_progress')
-      .select('*')
-      .in('activity_id', activityIds)
-      .order('date');
-    dailyProgress = data || [];
+    const chunks: string[][] = [];
+    for (let i = 0; i < activityIds.length; i += 10) {
+      chunks.push(activityIds.slice(i, i + 10));
+    }
+
+    const progressPromises = chunks.map((chunk) =>
+      adminDb.collection('daily_progress').where('activity_id', 'in', chunk).get()
+    );
+
+    const progressSnaps = await Promise.all(progressPromises);
+    dailyProgress = progressSnaps.flatMap((snap) =>
+      snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() } as unknown as DailyProgress))
+    );
   }
 
   // 4. Evaluate alerts

@@ -1,8 +1,15 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { createClient } from '@/lib/supabase/client';
-import { useRouter } from 'next/navigation';
+import { useFirebase } from '@/hooks/useFirebase';
+import { collection, query, where, getDocs, doc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
+
+interface Milestone {
+  id: string;
+  project_id: string;
+  name: string;
+  date: string;
+}
 
 interface MilestoneModalProps {
   projectId: string;
@@ -12,32 +19,34 @@ interface MilestoneModalProps {
 
 export function MilestoneModal({ projectId, isOwner, onUpdate }: MilestoneModalProps) {
   const [isOpen, setIsOpen] = useState(false);
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [milestones, setMilestones] = useState<any[]>([]);
+  const [milestones, setMilestones] = useState<Milestone[]>([]);
   const [loading, setLoading] = useState(false);
   const [name, setName] = useState('');
   const [date, setDate] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   
-  const supabase = createClient();
-  const router = useRouter();
+  const { db } = useFirebase();
 
   useEffect(() => {
     if (isOpen) {
       fetchMilestones();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
   const fetchMilestones = async () => {
     setLoading(true);
-    const { data } = await supabase
-      .from('project_milestones')
-      .select('*')
-      .eq('project_id', projectId)
-      .order('date');
-      
-    if (data) setMilestones(data);
+    try {
+      const q = query(collection(db, 'project_milestones'), where('project_id', '==', projectId));
+      const snap = await getDocs(q);
+      const data: Milestone[] = snap.docs
+        .map((docSnap) => ({ id: docSnap.id, ...docSnap.data() } as Milestone))
+        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      setMilestones(data);
+    } catch (e) {
+      console.error(e);
+    }
     setLoading(false);
   };
 
@@ -48,29 +57,21 @@ export function MilestoneModal({ projectId, isOwner, onUpdate }: MilestoneModalP
 
     try {
       if (editingId) {
-        // UPDATE
-        const { error } = await supabase
-          .from('project_milestones')
-          .update({ name: name.trim(), date: date })
-          .eq('id', editingId);
-        if (error) throw error;
+        await updateDoc(doc(db, 'project_milestones', editingId), { name: name.trim(), date: date });
       } else {
-        // INSERT
-        const { error } = await supabase
-          .from('project_milestones')
-          .insert({
-            project_id: projectId,
-            name: name.trim(),
-            date: date
-          });
-        if (error) throw error;
+        const docRef = doc(collection(db, 'project_milestones'));
+        await setDoc(docRef, {
+          project_id: projectId,
+          name: name.trim(),
+          date: date
+        });
       }
 
       setName('');
       setDate('');
       setEditingId(null);
       fetchMilestones();
-      onUpdate(); // Refresh Gantt
+      onUpdate(); 
       
     } catch (err: unknown) {
       alert('Error: ' + (err instanceof Error ? err.message : String(err)));
@@ -79,8 +80,7 @@ export function MilestoneModal({ projectId, isOwner, onUpdate }: MilestoneModalP
     }
   };
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const startEdit = (m: any) => {
+  const startEdit = (m: Milestone) => {
     setName(m.name);
     setDate(m.date);
     setEditingId(m.id);
@@ -95,13 +95,9 @@ export function MilestoneModal({ projectId, isOwner, onUpdate }: MilestoneModalP
   const removeMilestone = async (id: string) => {
     if (!window.confirm('¿Seguro que deseas eliminar este hito?')) return;
     try {
-      await supabase
-        .from('project_milestones')
-        .delete()
-        .eq('id', id);
-        
+      await deleteDoc(doc(db, 'project_milestones', id));
       fetchMilestones();
-      onUpdate(); // Refresh Gantt
+      onUpdate(); 
     } catch (err: unknown) {
       console.error(err);
     }
@@ -124,7 +120,6 @@ export function MilestoneModal({ projectId, isOwner, onUpdate }: MilestoneModalP
         <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
           <div className="bg-surface-900 border border-surface-700/50 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden relative fade-in max-h-[90vh] flex flex-col">
             
-            {/* Header */}
             <div className="flex items-center justify-between p-5 border-b border-surface-800 bg-surface-800/50 shrink-0">
               <h3 className="text-lg font-bold text-surface-100 flex items-center gap-2">
                 <svg className="w-5 h-5 text-accent-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -137,7 +132,6 @@ export function MilestoneModal({ projectId, isOwner, onUpdate }: MilestoneModalP
               </button>
             </div>
 
-            {/* Add/Edit Form (only owner/admin) */}
             {isOwner && (
               <div className="p-5 border-b border-surface-800 bg-surface-800/20 shrink-0">
                 <form onSubmit={handleSave} className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -168,7 +162,6 @@ export function MilestoneModal({ projectId, isOwner, onUpdate }: MilestoneModalP
               </div>
             )}
 
-            {/* List */}
             <div className="p-5 overflow-y-auto flex-1">
               <h4 className="text-xs font-bold text-surface-200 uppercase tracking-widest mb-4">Hitos Programados ({milestones.length})</h4>
               

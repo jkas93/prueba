@@ -19,9 +19,9 @@ export interface Project {
   start_date: string;
   end_date: string;
   owner_id: string;
-  share_token: string;
-  created_at: string;
-  updated_at: string;
+  share_token?: string | null;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface ProjectMember {

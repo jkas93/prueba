@@ -1,9 +1,10 @@
 'use client';
 
 import { useState } from 'react';
-import { createClient } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { signInWithEmailAndPassword } from 'firebase/auth';
+import { useFirebase } from '@/hooks/useFirebase';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,24 +14,41 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
-  const supabase = createClient();
+  const { auth } = useFirebase();
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    try {
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const idToken = await userCredential.user.getIdToken();
 
-    if (error) {
-      setError(error.message);
+      // Send token to next-firebase-auth-edge middleware login endpoint
+      const response = await fetch('/api/login', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${idToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ idToken }),
+      });
+
+      if (response.ok) {
+        router.push('/dashboard');
+        router.refresh();
+      } else {
+        setError('Error al crear sesión en el servidor.');
+        setLoading(false);
+      }
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        setError(err.message || 'Credenciales inválidas');
+      } else {
+        setError('Credenciales inválidas');
+      }
       setLoading(false);
-    } else {
-      router.push('/dashboard');
-      router.refresh();
     }
   };
 

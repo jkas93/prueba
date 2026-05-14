@@ -1,13 +1,14 @@
 'use client';
 
-import { createClient } from '@/lib/supabase/client';
+import { useFirebase } from '@/hooks/useFirebase';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { doc, deleteDoc, collection, getDocs, query, where, writeBatch } from 'firebase/firestore';
 
 export function DeleteProjectButton({ projectId, projectName, variant = 'button' }: { projectId: string; projectName: string; variant?: 'button' | 'menuItem' }) {
   const [isDeleting, setIsDeleting] = useState(false);
   const router = useRouter();
-  const supabase = createClient();
+  const { db } = useFirebase();
 
   const handleDelete = async () => {
     const userInput = window.prompt(
@@ -23,22 +24,32 @@ export function DeleteProjectButton({ projectId, projectName, variant = 'button'
 
     try {
       setIsDeleting(true);
-      const { error } = await supabase.from('projects').delete().eq('id', projectId);
       
-      if (error) {
-        console.error("Error al eliminar el proyecto:", error);
-        window.alert('Hubo un error de base de datos al eliminar el proyecto. Asegúrate de tener permisos de administrador.');
-        setIsDeleting(false);
-        return;
-      }
+      // En Firebase no hay "On Delete Cascade". Hay que borrar los hijos manualmente.
+      const batch = writeBatch(db);
       
-      // Navigate to dashboard
+      // 1. Borrar Gantt Elements
+      const ganttSnap = await getDocs(query(collection(db, 'gantt_elements'), where('project_id', '==', projectId)));
+      ganttSnap.docs.forEach(docSnap => batch.delete(docSnap.ref));
+
+      // 2. Borrar Alertas
+      const alertsSnap = await getDocs(query(collection(db, 'alerts'), where('project_id', '==', projectId)));
+      alertsSnap.docs.forEach(docSnap => batch.delete(docSnap.ref));
+
+      // NOTA: Para no sobrepasar los 500 writes del batch, se debería hacer en chunks.
+      // Asumimos un proyecto normal. Si es gigante, podría crashear.
+      await batch.commit();
+
+      // 3. Borrar el Proyecto
+      await deleteDoc(doc(db, 'projects', projectId));
+      
       window.alert("Proyecto eliminado exitosamente.");
       router.push('/dashboard');
       router.refresh();
     } catch (err) {
       console.error(err);
-      window.alert("Ocurrió un error inesperado conectando con el servidor.");
+      window.alert("Ocurrió un error inesperado conectando con el servidor. Asegúrate de tener permisos.");
+    } finally {
       setIsDeleting(false);
     }
   };

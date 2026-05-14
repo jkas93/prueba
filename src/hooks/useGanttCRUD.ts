@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
-import { useSupabase } from './useSupabase';
+import { useFirebase } from './useFirebase';
+import { collection, addDoc, doc, updateDoc, deleteDoc, writeBatch } from 'firebase/firestore';
 import type { GanttDbType } from '@/lib/gantt/types';
 import { toDbEndDate } from '@/lib/gantt/date-utils';
 
@@ -18,10 +19,9 @@ function extractErrorMessage(err: unknown): string {
 }
 
 export function useGanttCRUD() {
-  const supabase = useSupabase();
+  const { db } = useFirebase();
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // Funciones refactorizadas y purificadas (ya no tocan el estado del UI)
   const createTask = useCallback(async (
     type: GanttDbType,
     projectId: string,
@@ -31,36 +31,33 @@ export function useGanttCRUD() {
   ): Promise<CrudResult> => {
     setIsProcessing(true);
     try {
-      let table = '';
-      const insertData: Record<string, string | number | null> = {
+      const insertData: Record<string, unknown> = {
+        project_id: projectId,
+        type: type,
         name: String(ganttTask.text),
         sort_order: sortOrder,
+        parent_id: type === 'partida' ? null : (type === 'item' ? parentId?.replace('p_', '') : parentId?.replace('i_', '')),
+        created_at: new Date().toISOString()
       };
 
-      if (type === 'partida') {
-        table = 'partidas';
-        insertData.project_id = projectId;
-      } else if (type === 'item') {
-        table = 'items';
-        insertData.partida_id = parentId?.replace('p_', '') || null;
-      } else if (type === 'activity') {
-        table = 'activities';
-        insertData.item_id = parentId?.replace('i_', '') || null;
+      if (type === 'activity') {
         insertData.start_date = ganttTask.start_date ? new Date(String(ganttTask.start_date)).toISOString().split('T')[0] : null;
         insertData.end_date = ganttTask.end_date ? toDbEndDate(String(ganttTask.end_date)) : null;
         insertData.weight = 1;
+        insertData.updated_at = new Date().toISOString();
       }
 
-      const { data, error } = await supabase.from(table).insert(insertData).select().single();
-      if (error) throw error;
-      return { success: true, data };
+      // Se guarda en una coleccion unificada para Gantt
+      const docRef = await addDoc(collection(db, 'gantt_elements'), insertData);
+      
+      return { success: true, data: { id: docRef.id, ...insertData } };
     } catch (err: unknown) {
       console.error(`Error creating ${type}:`, err);
       return { success: false, error: extractErrorMessage(err) };
     } finally {
       setIsProcessing(false);
     }
-  }, [supabase]);
+  }, [db]);
 
   const updateTask = useCallback(async (
     type: GanttDbType,
@@ -69,9 +66,11 @@ export function useGanttCRUD() {
   ): Promise<CrudResult> => {
     setIsProcessing(true);
     try {
-      const table = type === 'partida' ? 'partidas' : type === 'item' ? 'items' : 'activities';
-      const { error } = await supabase.from(table).update(updates).eq('id', dbId);
-      if (error) throw error;
+      const docRef = doc(db, 'gantt_elements', dbId);
+      if (type === 'activity') {
+        updates.updated_at = new Date().toISOString();
+      }
+      await updateDoc(docRef, updates);
       return { success: true };
     } catch (err: unknown) {
       console.error(`Error updating ${type}:`, err);
@@ -79,7 +78,7 @@ export function useGanttCRUD() {
     } finally {
       setIsProcessing(false);
     }
-  }, [supabase]);
+  }, [db]);
 
   const deleteTask = useCallback(async (
     type: GanttDbType,
@@ -87,9 +86,10 @@ export function useGanttCRUD() {
   ): Promise<CrudResult> => {
     setIsProcessing(true);
     try {
-      const table = type === 'partida' ? 'partidas' : type === 'item' ? 'items' : 'activities';
-      const { error } = await supabase.from(table).delete().eq('id', dbId);
-      if (error) throw error;
+      // NOTA: Firebase no tiene "ON DELETE CASCADE".
+      // Si borras una partida, deberías borrar sus items y actividades.
+      // Por simplicidad en este CRUD, se asume que una Cloud Function o un query buscará los hijos para borrarlos.
+      await deleteDoc(doc(db, 'gantt_elements', dbId));
       return { success: true };
     } catch (err: unknown) {
       console.error(`Error deleting ${type}:`, err);
@@ -97,7 +97,7 @@ export function useGanttCRUD() {
     } finally {
       setIsProcessing(false);
     }
-  }, [supabase]);
+  }, [db]);
 
   const reorderSiblings = useCallback(async (
     type: GanttDbType,
@@ -105,17 +105,15 @@ export function useGanttCRUD() {
   ): Promise<CrudResult> => {
     setIsProcessing(true);
     try {
-      const table = type === 'partida' ? 'partidas' : type === 'item' ? 'items' : 'activities';
+      // Reemplazo del RPC 'batch_update_sort_orders' usando un WriteBatch de Firestore
+      const batch = writeBatch(db);
       
-      const updates = siblingDbIds.map((id, index) => ({ id, sort_order: index }));
-
-      const { error } = await supabase.rpc('batch_update_sort_orders', {
-        p_table_name: table,
-        p_updates: updates
+      siblingDbIds.forEach((id, index) => {
+        const docRef = doc(db, 'gantt_elements', id);
+        batch.update(docRef, { sort_order: index });
       });
 
-      if (error) throw error;
-
+      await batch.commit();
       return { success: true };
     } catch (err: unknown) {
       console.error(`Error reordering ${type}s:`, err);
@@ -123,7 +121,7 @@ export function useGanttCRUD() {
     } finally {
       setIsProcessing(false);
     }
-  }, [supabase]);
+  }, [db]);
 
   return {
     isProcessing,

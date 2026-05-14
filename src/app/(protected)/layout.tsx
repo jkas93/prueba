@@ -1,37 +1,56 @@
-import { createClient, getCachedUser } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { Sidebar } from '@/components/dashboard/Sidebar';
+import { adminDb } from '@/lib/firebase/server';
+import { getTokens } from 'next-firebase-auth-edge';
+import { cookies } from 'next/headers';
 
-// Se remueve force-dynamic para permitir renderizado parcial y mejor caché
-
-/**
- * Protected layout — wraps all authenticated routes.
- * Golden Tower Construction brand sidebar with navy + gold theme.
- */
 export default async function ProtectedLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const supabase = await createClient();
-  const { data: { user } } = await getCachedUser();
+  const cookieStore = await cookies();
+  const tokens = await getTokens(cookieStore, {
+    apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY!,
+    cookieName: 'AuthToken',
+    cookieSignatureKeys: ['secret-key-for-signing-cookies'],
+    serviceAccount: {
+      projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID!,
+      clientEmail: process.env.FIREBASE_ADMIN_CLIENT_EMAIL!,
+      privateKey: (process.env.FIREBASE_ADMIN_PRIVATE_KEY || '').replace(/\\n/g, "\n"),
+    }
+  });
 
-  if (!user) {
+  if (!tokens) {
     redirect('/login');
   }
 
+  const user = tokens.decodedToken;
+
   // Get user profile
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('full_name, avatar_url, system_role')
-    .eq('id', user.id)
-    .single();
+  const userDoc = await adminDb.collection('users').doc(user.uid).get();
+  const profileData = userDoc.data();
+  const profile = profileData ? {
+    full_name: profileData.full_name as string,
+    avatar_url: profileData.avatar_url as string,
+    system_role: profileData.system_role as 'user' | 'superadmin' | undefined
+  } : null;
+
+  // Supabase User type shim for Sidebar
+  const userShim = {
+    id: user.uid,
+    email: user.email || '',
+    app_metadata: {},
+    user_metadata: {},
+    aud: 'authenticated',
+    created_at: new Date().toISOString()
+  };
 
   return (
     <div className="h-screen flex overflow-hidden pb-16 md:pb-0 landscape:pb-0">
       {/* Sidebar Modular Contráible */}
-      <Sidebar user={user} profile={profile} />
+      <Sidebar user={{ email: user.email || '' }} profile={profile} />
 
       {/* Main content */}
       <main className="flex-1 overflow-auto">

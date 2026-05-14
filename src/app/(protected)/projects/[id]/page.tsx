@@ -1,71 +1,140 @@
-import { createClient, getCachedUser } from '@/lib/supabase/server';
+import { adminDb } from '@/lib/firebase/server';
+import { getTokens } from 'next-firebase-auth-edge';
+import { cookies } from 'next/headers';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { ProjectTabs } from '@/components/project/ProjectTabs';
 import { ProjectActionsMenu } from '@/components/project/ProjectActionsMenu';
 import { format, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
+import type { PartidaWithItems, DailyProgress, Alert } from '@/lib/types';
 
 interface Props {
   params: Promise<{ id: string }>;
 }
 
+type GanttElement = {
+  id: string;
+  type: 'partida' | 'item' | 'activity';
+  project_id: string;
+  parent_id: string | null;
+  name: string;
+  start_date?: string;
+  end_date?: string;
+  weight?: number;
+  sort_order?: number;
+};
+
 export default async function ProjectPage({ params }: Props) {
   const { id } = await params;
-  const supabase = await createClient();
 
-  // Fetch project, partidas, alerts and milestones in parallel
-  const [projectRes, partidasRes, alertsRes, milestonesRes] = await Promise.all([
-    supabase.from('projects').select('*').eq('id', id).single(),
-    supabase.from('partidas').select('*, items (*, activities (*))').eq('project_id', id).order('sort_order'),
-    supabase.from('alerts').select('*').eq('project_id', id).order('created_at', { ascending: false }).limit(20),
-    supabase.from('project_milestones').select('*').eq('project_id', id).order('date')
-  ]);
+  const cookieStore = await cookies();
+  const tokens = await getTokens(cookieStore, {
+    apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY!,
+    cookieName: 'AuthToken',
+    cookieSignatureKeys: ['secret-key-for-signing-cookies'],
+    serviceAccount: {
+      projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID!,
+      clientEmail: process.env.FIREBASE_ADMIN_CLIENT_EMAIL!,
+      privateKey: (process.env.FIREBASE_ADMIN_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
+    },
+  });
 
-  const project = projectRes.data;
-  const projectError = projectRes.error;
+  if (!tokens) notFound();
+  const userId = tokens.decodedToken.uid;
 
-  if (projectError || !project) {
-    notFound();
-  }
+  const projectSnap = await adminDb.collection('projects').doc(id).get();
+  if (!projectSnap.exists) notFound();
+  const project = { id: projectSnap.id, ...projectSnap.data() } as {
+    id: string; name: string; description?: string;
+    start_date: string; end_date: string; owner_id: string; share_token?: string | null;
+  };
 
-  const { data: { user } } = await getCachedUser();
-  const isOwner = user?.id === project.owner_id;
+  const isOwner = userId === project.owner_id;
 
-  const partidas = partidasRes.data || [];
-  const alerts = alertsRes.data || [];
-  const milestones = milestonesRes.data || [];
+  const ganttSnap = await adminDb
+    .collection('gantt_elements')
+    .where('project_id', '==', id)
+    .orderBy('sort_order')
+    .get();
 
-  // Fetch all daily progress for this project's activities (after we have activity ids)
-  const activityIds = partidas
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .flatMap((p: any) => p.items || [])
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .flatMap((i: any) => i.activities || [])
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .map((a: any) => a.id);
+  const elements = ganttSnap.docs.map(
+    (d) => ({ id: d.id, ...d.data() } as GanttElement)
+  );
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let dailyProgress: any[] = [];
+  const partidasRaw = elements.filter((e) => e.type === 'partida');
+  const itemsRaw = elements.filter((e) => e.type === 'item');
+  const activitiesRaw = elements.filter((e) => e.type === 'activity');
+
+  const partidas: PartidaWithItems[] = partidasRaw.map((p) => ({
+    id: p.id,
+    project_id: id,
+    name: p.name,
+    sort_order: p.sort_order ?? 0,
+    created_at: '',
+    items: itemsRaw
+      .filter((i) => i.parent_id === p.id)
+      .map((i) => ({
+        id: i.id,
+        partida_id: p.id,
+        name: i.name,
+        sort_order: i.sort_order ?? 0,
+        created_at: '',
+        activities: activitiesRaw
+          .filter((a) => a.parent_id === i.id)
+          .map((a) => ({
+            id: a.id,
+            item_id: i.id,
+            name: a.name,
+            start_date: a.start_date ?? '',
+            end_date: a.end_date ?? '',
+            weight: a.weight ?? 1,
+            sort_order: a.sort_order ?? 0,
+            created_at: '',
+            updated_at: '',
+          })),
+      })),
+  }));
+
+  const activityIds = activitiesRaw.map((a) => a.id);
+  let dailyProgress: DailyProgress[] = [];
+
   if (activityIds.length > 0) {
-    const { data } = await supabase
-      .from('daily_progress')
-      .select('*')
-      .in('activity_id', activityIds)
-      .order('date');
-    dailyProgress = data || [];
+    const chunks: string[][] = [];
+    for (let i = 0; i < activityIds.length; i += 10) {
+      chunks.push(activityIds.slice(i, i + 10));
+    }
+    const progressSnaps = await Promise.all(
+      chunks.map((chunk) =>
+        adminDb.collection('daily_progress').where('activity_id', 'in', chunk).orderBy('date').get()
+      )
+    );
+    dailyProgress = progressSnaps.flatMap((snap) =>
+      snap.docs.map((d) => ({ id: d.id, ...d.data() } as unknown as DailyProgress))
+    );
   }
 
-  // Calcular fechas efectivas desde las actividades reales
-  const allActivities = partidas
-    .flatMap((p: { items?: { activities?: { start_date: string; end_date: string }[] }[] }) => p.items || [])
-    .flatMap((i) => i.activities || []);
+  const alertsSnap = await adminDb
+    .collection('alerts')
+    .where('project_id', '==', id)
+    .orderBy('created_at', 'desc')
+    .limit(20)
+    .get();
+  const alerts = alertsSnap.docs.map((d) => ({ id: d.id, ...d.data() } as unknown as Alert));
+
+  const milestonesSnap = await adminDb
+    .collection('project_milestones')
+    .where('project_id', '==', id)
+    .orderBy('date')
+    .get();
+  const milestones = milestonesSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
   let effectiveStart = project.start_date;
   let effectiveEnd = project.end_date;
-  if (allActivities.length > 0) {
-    const actStarts = allActivities.map(a => a.start_date).filter(Boolean);
-    const actEnds = allActivities.map(a => a.end_date).filter(Boolean);
+
+  if (activitiesRaw.length > 0) {
+    const actStarts = activitiesRaw.map((a) => a.start_date).filter((d): d is string => Boolean(d));
+    const actEnds = activitiesRaw.map((a) => a.end_date).filter((d): d is string => Boolean(d));
     if (actStarts.length > 0) {
       const minStart = actStarts.sort()[0];
       if (minStart < effectiveStart) effectiveStart = minStart;
@@ -76,15 +145,12 @@ export default async function ProjectPage({ params }: Props) {
     }
   }
 
-  // Override project dates for downstream components
   const effectiveProject = { ...project, start_date: effectiveStart, end_date: effectiveEnd };
 
   return (
     <div className="p-3 md:p-6 max-w-full mx-auto fade-in">
-      {/* Header Estructurado P.U.L.S.O. */}
       <div className="flex flex-col gap-2 mb-4">
 
-        {/* Row 1: Breadcrumbs (Minimal) */}
         <div className="flex items-center gap-2 text-[10px] md:text-sm text-surface-200/30 uppercase tracking-widest font-bold">
           <Link href="/dashboard" className="hover:text-accent-400 transition-colors">
             Dashboard
@@ -93,7 +159,6 @@ export default async function ProjectPage({ params }: Props) {
           <span className="text-surface-200/60 truncate max-w-[150px] md:max-w-xs">{project.name}</span>
         </div>
 
-        {/* Row 2: Title & Primary Actions Menu (SIEMPRE AL MISMO NIVEL) */}
         <div className="flex items-start justify-between gap-4">
           <div className="flex-1 min-w-0">
             <h1 className="text-xl md:text-2xl font-bold text-surface-100 leading-tight">
@@ -109,7 +174,6 @@ export default async function ProjectPage({ params }: Props) {
           </div>
         </div>
 
-        {/* Row 3: Metrics & Timeframes (Secondary info) */}
         <div className="flex flex-wrap items-center gap-2">
           <div className="text-[10px] md:text-xs text-surface-200 bg-white border border-surface-700/50 px-3 py-1.5 rounded-lg flex-shrink-0 shadow-sm font-medium">
             <span className="font-bold mr-1 uppercase tracking-wider text-surface-400">Periodo:</span>{' '}
@@ -118,13 +182,12 @@ export default async function ProjectPage({ params }: Props) {
         </div>
       </div>
 
-      {/* Tabbed Content */}
       <ProjectTabs
-        project={effectiveProject}
-        partidas={partidas || []}
+        project={effectiveProject as import('@/lib/types').Project}
+        partidas={partidas}
         dailyProgress={dailyProgress}
-        alerts={alerts || []}
-        milestones={milestones || []}
+        alerts={alerts}
+        milestones={milestones}
       />
     </div>
   );

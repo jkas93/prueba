@@ -1,8 +1,9 @@
 'use client';
 
 import { useState } from 'react';
-import { createClient } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
+import { collection, addDoc } from 'firebase/firestore';
+import { useFirebase } from '@/hooks/useFirebase';
 
 export function NewProjectButton() {
   const [open, setOpen] = useState(false);
@@ -13,53 +14,39 @@ export function NewProjectButton() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
-  const supabase = createClient();
+  const { auth, db } = useFirebase();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
 
-    const { data: { user } } = await supabase.auth.getUser();
+    const user = auth.currentUser;
     if (!user) {
       setError('Sesión no encontrada');
       setLoading(false);
       return;
     }
 
-    // [AUTO-HEAL FIX]: If the user accidentally wiped their "profiles" DB table, 
-    // the trigger is gone but their Auth Session remains. When they insert a project,
-    // the DB throws a FATAL 500 because owner_id points to a non-existent profile.
-    // Let's self-heal their profile just in case before inserting.
-    await supabase.from('profiles').insert({ id: user.id }).select().single();
-
-    const { data, error: insertError } = await supabase
-      .from('projects')
-      .insert({
+    try {
+      const docRef = await addDoc(collection(db, 'projects'), {
         name,
         description: description || null,
         start_date: startDate,
         end_date: endDate,
-        owner_id: user.id,
-      })
-      .select()
-      .single();
-
-    if (insertError) {
-      console.error(insertError);
-      setError('Error al crear proyecto: ' + insertError.message);
-      setLoading(false);
-    } else {
-      // Also add the owner as an admin member
-      await supabase.from('project_members').insert({
-        project_id: data.id,
-        user_id: user.id,
-        role: 'admin',
+        owner_id: user.uid,
+        members: [user.uid], // Start with owner as member for simpler rules
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
       });
 
       setOpen(false);
       resetForm();
       router.refresh();
+    } catch (insertError: any) {
+      console.error(insertError);
+      setError('Error al crear proyecto: ' + insertError.message);
+      setLoading(false);
     }
   };
 
@@ -84,13 +71,11 @@ export function NewProjectButton() {
       {/* Modal */}
       {open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          {/* Backdrop */}
           <div
             className="absolute inset-0 bg-black/60 backdrop-blur-sm"
             onClick={() => { setOpen(false); resetForm(); }}
           />
 
-          {/* Modal content */}
           <div className="relative glass-card p-8 w-full max-w-lg fade-in">
             <h2 className="text-xl font-bold text-surface-100 mb-6">Nuevo Proyecto</h2>
 

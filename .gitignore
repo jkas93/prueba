@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+firebase-credentials.json
+migrate_to_firebase.js
+scripts/migrate-*.mts

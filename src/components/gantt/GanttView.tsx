@@ -2,7 +2,8 @@
 
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { createClient } from '@/lib/supabase/client';
+import { useFirebase } from '@/hooks/useFirebase';
+import { doc, getDoc } from 'firebase/firestore';
 import { PartidaWithItems, DailyProgress } from '@/lib/types';
 import { GanttDbType } from '@/lib/gantt/types';
 import { buildProgressMap, buildTasksFromPartidas } from '@/lib/gantt/progress-utils';
@@ -26,7 +27,7 @@ interface Props {
 
 export function GanttView({ projectId, partidas, dailyProgress = [], readonly = false }: Props) {
   const router = useRouter();
-  const [supabase] = useState(() => createClient());
+  const { auth, db } = useFirebase();
   
   const [zoomLevel, setZoomLevel] = useState('day');
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -52,12 +53,14 @@ export function GanttView({ projectId, partidas, dailyProgress = [], readonly = 
 
   useEffect(() => {
     async function checkOwner() {
-      const { data: { user } } = await supabase.auth.getUser();
-      const { data: proj } = await supabase.from('projects').select('owner_id').eq('id', projectId).single();
-      setIsOwner(user?.id === proj?.owner_id);
+      const user = auth.currentUser;
+      if (!user) return;
+      const snap = await getDoc(doc(db, 'projects', projectId));
+      const proj = snap.data();
+      setIsOwner(user.uid === proj?.owner_id);
     }
     checkOwner();
-  }, [projectId, supabase]);
+  }, [projectId, auth, db]);
 
   const tasksData = useMemo(() => {
     const progressMap = buildProgressMap(dailyProgress);

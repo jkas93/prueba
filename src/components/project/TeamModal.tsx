@@ -1,8 +1,17 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { createClient } from '@/lib/supabase/client';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, useCallback } from 'react';
+import { useFirebase } from '@/hooks/useFirebase';
+import {
+  collection,
+  query,
+  where,
+  getDocs,
+  doc,
+  getDoc,
+  setDoc,
+  updateDoc,
+} from 'firebase/firestore';
 
 interface TeamModalProps {
   projectId: string;
@@ -11,35 +20,57 @@ interface TeamModalProps {
   variant?: 'button' | 'menuItem';
 }
 
+type Member = {
+  user_id: string;
+  role: string;
+  full_name?: string;
+  email?: string;
+};
+
 export function TeamModal({ projectId, projectName, isOwner, variant = 'button' }: TeamModalProps) {
   const [isOpen, setIsOpen] = useState(false);
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [members, setMembers] = useState<any[]>([]);
+  const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(false);
   const [emailToInvite, setEmailToInvite] = useState('');
   const [searchStatus, setSearchStatus] = useState('');
   const [inviting, setInviting] = useState(false);
   
-  const supabase = createClient();
-  const router = useRouter();
+  const { db } = useFirebase();
+
+  const fetchMembers = useCallback(async () => {
+    setLoading(true);
+    try {
+      const projectSnap = await getDoc(doc(db, 'projects', projectId));
+      if (!projectSnap.exists()) { setLoading(false); return; }
+      
+      const projectData = projectSnap.data();
+      const memberIds: string[] = projectData.members || [];
+
+      const memberProfiles = await Promise.all(
+        memberIds.map(async (uid) => {
+          const userSnap = await getDoc(doc(db, 'users', uid));
+          const userData = userSnap.data();
+          const isOwnerUid = uid === projectData.owner_id;
+          return {
+            user_id: uid,
+            role: isOwnerUid ? 'admin' : (userData?.role || 'viewer'),
+            full_name: userData?.full_name || '',
+            email: userData?.email || '',
+          };
+        })
+      );
+      setMembers(memberProfiles);
+    } catch (err) {
+      console.error(err);
+    }
+    setLoading(false);
+  }, [db, projectId]);
 
   useEffect(() => {
     if (isOpen) {
       fetchMembers();
     }
-  }, [isOpen]);
-
-  const fetchMembers = async () => {
-    setLoading(true);
-    // profiles(*) to get full_name and email (after running sql)
-    const { data, error } = await supabase
-      .from('project_members')
-      .select('user_id, role, profiles(full_name, avatar_url, email)')
-      .eq('project_id', projectId);
-      
-    if (data) setMembers(data);
-    setLoading(false);
-  };
+  }, [isOpen, fetchMembers]);
 
   const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -48,37 +79,31 @@ export function TeamModal({ projectId, projectName, isOwner, variant = 'button' 
     setSearchStatus('');
 
     try {
-      // 1. Search for user by email using the new RPC function
-      const { data: profiles, error: searchError } = await supabase
-        .rpc('get_profile_by_email', { search_email: emailToInvite.trim() });
-      
-      if (searchError) throw searchError;
+      const q = query(collection(db, 'users'), where('email', '==', emailToInvite.trim()));
+      const snap = await getDocs(q);
 
-      if (!profiles || profiles.length === 0) {
+      if (snap.empty) {
         setSearchStatus('No se encontró cuenta con ese correo. Deben registrarse primero.');
         setInviting(false);
         return;
       }
 
-      const userProfile = profiles[0];
+      const userProfile = snap.docs[0];
 
-      // Check if already a member
       if (members.some(m => m.user_id === userProfile.id)) {
         setSearchStatus('Este usuario ya es miembro del proyecto.');
         setInviting(false);
         return;
       }
 
-      // Add to project members with viewer role by default
-      const { error: insertError } = await supabase
-        .from('project_members')
-        .insert({
-          project_id: projectId,
-          user_id: userProfile.id,
-          role: 'viewer'
+      const projectRef = doc(db, 'projects', projectId);
+      const projectSnap = await getDoc(projectRef);
+      if (projectSnap.exists()) {
+        const existingMembers: string[] = projectSnap.data().members || [];
+        await updateDoc(projectRef, {
+          members: [...existingMembers, userProfile.id]
         });
-
-      if (insertError) throw insertError;
+      }
 
       setEmailToInvite('');
       setSearchStatus('¡Invitación enviada y usuario añadido!');
@@ -94,12 +119,11 @@ export function TeamModal({ projectId, projectName, isOwner, variant = 'button' 
 
   const changeRole = async (userId: string, newRole: string) => {
     try {
-      await supabase
-        .from('project_members')
-        .update({ role: newRole })
-        .eq('project_id', projectId)
-        .eq('user_id', userId);
-        
+      await setDoc(doc(db, 'project_member_roles', `${projectId}_${userId}`), {
+        project_id: projectId,
+        user_id: userId,
+        role: newRole,
+      }, { merge: true });
       fetchMembers();
     } catch (err: unknown) {
       console.error(err);
@@ -109,12 +133,14 @@ export function TeamModal({ projectId, projectName, isOwner, variant = 'button' 
   const removeMember = async (userId: string) => {
     if (!window.confirm('¿Seguro que deseas remover a este miembro?')) return;
     try {
-      await supabase
-        .from('project_members')
-        .delete()
-        .eq('project_id', projectId)
-        .eq('user_id', userId);
-        
+      const projectRef = doc(db, 'projects', projectId);
+      const projectSnap = await getDoc(projectRef);
+      if (projectSnap.exists()) {
+        const existingMembers: string[] = projectSnap.data().members || [];
+        await updateDoc(projectRef, {
+          members: existingMembers.filter(id => id !== userId)
+        });
+      }
       fetchMembers();
     } catch (err: unknown) {
       console.error(err);
@@ -138,7 +164,6 @@ export function TeamModal({ projectId, projectName, isOwner, variant = 'button' 
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
           <div className="bg-surface-900 border border-surface-700/50 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden relative fade-in max-h-[90vh] flex flex-col">
             
-            {/* Header */}
             <div className="flex items-center justify-between p-5 border-b border-surface-800 bg-surface-800/50 shrink-0">
               <h3 className="text-lg font-bold text-surface-100 flex items-center gap-2">
                 <svg className="w-5 h-5 text-accent-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -151,7 +176,6 @@ export function TeamModal({ projectId, projectName, isOwner, variant = 'button' 
               </button>
             </div>
 
-            {/* Invite Form (only owner) */}
             {isOwner && (
               <div className="p-5 border-b border-surface-800 bg-surface-800/20 shrink-0">
                 <form onSubmit={handleInvite} className="flex gap-3">
@@ -176,7 +200,6 @@ export function TeamModal({ projectId, projectName, isOwner, variant = 'button' 
               </div>
             )}
 
-            {/* Members List */}
             <div className="p-5 overflow-y-auto flex-1">
               <h4 className="text-xs font-bold text-surface-200 uppercase tracking-widest mb-4">Integrantes ({members.length})</h4>
               
@@ -186,17 +209,15 @@ export function TeamModal({ projectId, projectName, isOwner, variant = 'button' 
                 <p className="text-sm text-surface-400 text-center py-4">No hay invitados aún.</p>
               ) : (
                 <ul className="space-y-3">
-                  {members.map((m) => {
-                    const profileData = Array.isArray(m.profiles) ? m.profiles[0] : m.profiles;
-                    return (
+                  {members.map((m) => (
                     <li key={m.user_id} className="flex items-center justify-between p-3 rounded-lg border border-surface-800 bg-surface-800/50">
                       <div className="flex items-center gap-3">
                         <div className="w-8 h-8 rounded-full bg-accent-500/20 flex items-center justify-center text-accent-500 font-bold text-xs uppercase">
-                          {profileData?.full_name?.charAt(0) || profileData?.email?.charAt(0) || '?'}
+                          {m.full_name?.charAt(0) || m.email?.charAt(0) || '?'}
                         </div>
                         <div>
-                          <p className="text-sm font-bold text-surface-100">{profileData?.full_name || 'Usuario'}</p>
-                          <p className="text-xs text-surface-400">{profileData?.email}</p>
+                          <p className="text-sm font-bold text-surface-100">{m.full_name || 'Usuario'}</p>
+                          <p className="text-xs text-surface-400">{m.email}</p>
                         </div>
                       </div>
                       
@@ -222,7 +243,7 @@ export function TeamModal({ projectId, projectName, isOwner, variant = 'button' 
                         )}
                       </div>
                     </li>
-                  )})}
+                  ))}
                 </ul>
               )}
             </div>

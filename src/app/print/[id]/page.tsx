@@ -1,55 +1,124 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { createClient } from '@/lib/supabase/client';
+import { db } from '@/lib/firebase/client';
 import { SCurveChart } from '@/components/charts/SCurveChart';
 import { GanttView } from '@/components/gantt/GanttView';
 import { use } from 'react';
 import { format, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
+import {
+  doc,
+  getDoc,
+  collection,
+  query,
+  where,
+  getDocs,
+  orderBy,
+} from 'firebase/firestore';
+import type { PartidaWithItems, DailyProgress } from '@/lib/types';
+
+type Project = {
+  id: string;
+  name: string;
+  description?: string;
+  start_date: string;
+  end_date: string;
+  owner_id: string;
+  share_token?: string | null;
+};
+
+type Milestone = { id: string; name: string; date: string };
 
 export default function PrintPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [project, setProject] = useState<any>(null);
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [partidas, setPartidas] = useState<any[]>([]);
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [dailyProgress, setDailyProgress] = useState<any[]>([]);
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [milestones, setMilestones] = useState<any[]>([]);
+  const [project, setProject] = useState<Project | null>(null);
+  const [partidas, setPartidas] = useState<PartidaWithItems[]>([]);
+  const [dailyProgress, setDailyProgress] = useState<DailyProgress[]>([]);
+  const [milestones, setMilestones] = useState<Milestone[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function fetchData() {
-      const supabase = createClient();
-      
-      const { data: pData } = await supabase.from('projects').select('*').eq('id', id).single();
-      const { data: pList } = await supabase.from('partidas').select('*, items(*, activities(*))').eq('project_id', id).order('sort_order');
-      
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const activityIds = (pList || []).flatMap((p: any) => p.items || []).flatMap((i: any) => i.activities || []).map((a: any) => a.id);
-      const { data: dpData } = await supabase.from('daily_progress').select('*').in('activity_id', activityIds).order('date');
-      
-      // Fetch milestones
-      const { data: msData } = await supabase.from('project_milestones').select('*').eq('project_id', id).order('date');
+      // 1. Fetch project
+      const projectSnap = await getDoc(doc(db, 'projects', id));
+      if (!projectSnap.exists()) { setLoading(false); return; }
+      const pData = { id: projectSnap.id, ...projectSnap.data() } as Project;
+
+      // 2. Fetch gantt elements
+      const ganttSnap = await getDocs(
+        query(collection(db, 'gantt_elements'), where('project_id', '==', id), orderBy('sort_order'))
+      );
+      const elements = ganttSnap.docs.map(d => ({ id: d.id, ...d.data() })) as Array<{
+        id: string; type: string; parent_id: string | null; name: string;
+        start_date?: string; end_date?: string; weight?: number; sort_order?: number;
+      }>;
+
+      // Rebuild PartidaWithItems structure from flat elements
+      const partidasRaw = elements.filter(e => e.type === 'partida');
+      const itemsRaw = elements.filter(e => e.type === 'item');
+      const activitiesRaw = elements.filter(e => e.type === 'activity');
+
+      const pList: PartidaWithItems[] = partidasRaw.map(p => ({
+        id: p.id,
+        project_id: id,
+        name: p.name,
+        sort_order: p.sort_order ?? 0,
+        created_at: '',
+        items: itemsRaw
+          .filter(i => i.parent_id === p.id)
+          .map(i => ({
+            id: i.id,
+            partida_id: p.id,
+            name: i.name,
+            sort_order: i.sort_order ?? 0,
+            created_at: '',
+            activities: activitiesRaw
+              .filter(a => a.parent_id === i.id)
+              .map(a => ({
+                id: a.id,
+                item_id: i.id,
+                name: a.name,
+                start_date: a.start_date ?? '',
+                end_date: a.end_date ?? '',
+                weight: a.weight ?? 1,
+                sort_order: a.sort_order ?? 0,
+                created_at: '',
+                updated_at: '',
+              })),
+          })),
+      }));
+
+      // 3. Fetch daily progress
+      const activityIds = activitiesRaw.map(a => a.id);
+      let dpList: DailyProgress[] = [];
+      if (activityIds.length > 0) {
+        const chunks: string[][] = [];
+        for (let i = 0; i < activityIds.length; i += 10) chunks.push(activityIds.slice(i, i + 10));
+        const snaps = await Promise.all(
+          chunks.map(chunk => getDocs(query(collection(db, 'daily_progress'), where('activity_id', 'in', chunk))))
+        );
+        dpList = snaps.flatMap(snap => snap.docs.map(d => ({ id: d.id, ...d.data() } as DailyProgress)));
+      }
+
+      // 4. Fetch milestones
+      const msSnap = await getDocs(
+        query(collection(db, 'project_milestones'), where('project_id', '==', id), orderBy('date'))
+      );
+      const msList = msSnap.docs.map(d => ({ id: d.id, ...d.data() } as Milestone));
 
       setProject(pData);
-      setPartidas(pList || []);
-      setDailyProgress(dpData || []);
-      setMilestones(msData || []);
+      setPartidas(pList);
+      setDailyProgress(dpList);
+      setMilestones(msList);
       setLoading(false);
 
-      // Trigger standard print when everything is fully loaded and drawn.
-      // Dhtmlx-gantt and Echarts need ~1s to fully render.
-      setTimeout(() => {
-        window.print();
-      }, 1500);
+      setTimeout(() => { window.print(); }, 1500);
     }
     fetchData();
   }, [id]);
 
-  if (loading) return <div className="p-10 text-center"><span className="spinner"></span> Generando PDF...</div>;
+  if (loading) return <div className="p-10 text-center"><span className="spinner" /> Generando PDF...</div>;
   if (!project) return <div className="p-10 text-center">Proyecto no encontrado.</div>;
 
   return (
@@ -75,12 +144,11 @@ export default function PrintPage({ params }: { params: Promise<{ id: string }> 
             </p>
          </div>
 
-         {/* Curva S */}
          <div className="mb-12 page-break-after">
             <h2 className="text-xl font-bold border-b border-surface-200/30 pb-2 mb-4 text-primary-700">1. Analíticas Curva S (EVM)</h2>
             <div className="h-[400px] rounded-lg border border-surface-200/20 bg-surface-50 p-4 print:border-none print:shadow-none">
               <SCurveChart 
-                project={project} 
+                project={project as import('@/lib/types').Project} 
                 partidas={partidas} 
                 dailyProgress={dailyProgress} 
                 milestones={milestones} 
@@ -88,7 +156,6 @@ export default function PrintPage({ params }: { params: Promise<{ id: string }> 
             </div>
          </div>
 
-         {/* Gantt Chart (Requires scaling for print, dhtmlx natively handles it okay mostly) */}
          <div className="mb-12">
             <h2 className="text-xl font-bold border-b border-surface-200/30 pb-2 mb-4 text-primary-700">2. Cronograma General (Gantt)</h2>
             <div className="rounded-lg border border-surface-200/20 print:border-none print:shadow-none">
@@ -102,7 +169,6 @@ export default function PrintPage({ params }: { params: Promise<{ id: string }> 
 
       </div>
 
-      {/* Print-specific styles — standard style tag, works in App Router */}
       <style>{`
         @media print {
           body { background-color: white !important; color: black !important; }

@@ -1,4 +1,6 @@
-import { createClient, getCachedUser } from '@/lib/supabase/server';
+import { adminDb } from '@/lib/firebase/server';
+import { getTokens } from 'next-firebase-auth-edge';
+import { cookies } from 'next/headers';
 import { NewProjectButton } from '@/components/dashboard/NewProjectButton';
 import { ProjectCard } from '@/components/dashboard/ProjectCard';
 import { calculateSCurve } from '@/lib/scurve';
@@ -6,15 +8,23 @@ import { calculateSCurve } from '@/lib/scurve';
 export const dynamic = 'force-dynamic';
 
 export default async function DashboardPage() {
-  const supabase = await createClient();
-  const { data: { user } } = await getCachedUser();
+  const cookieStore = await cookies();
+  const tokens = await getTokens(cookieStore, {
+    apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY!,
+    cookieName: 'AuthToken',
+    cookieSignatureKeys: ['secret-key-for-signing-cookies'],
+    serviceAccount: {
+      projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID!,
+      clientEmail: process.env.FIREBASE_ADMIN_CLIENT_EMAIL!,
+      privateKey: (process.env.FIREBASE_ADMIN_PRIVATE_KEY || '').replace(/\\n/g, "\n"),
+    }
+  });
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('system_role')
-    .eq('id', user!.id)
-    .single();
+  if (!tokens) return null;
+  const user = tokens.decodedToken;
 
+  const userDoc = await adminDb.collection('users').doc(user.uid).get();
+  const profile = userDoc.data();
   const isSuperadmin = profile?.system_role === 'superadmin';
 
   type ProjectData = {
@@ -32,92 +42,93 @@ export default async function DashboardPage() {
   let allProjects: ProjectData[] = [];
 
   if (isSuperadmin) {
-    const { data } = await supabase
-      .from('projects')
-      .select('*')
-      .order('created_at', { ascending: false });
-    allProjects = (data || []).map(p => ({
-      ...p,
-      userRole: p.owner_id === user!.id ? 'owner' : 'superadmin'
-    }));
+    const projectsSnap = await adminDb.collection('projects').orderBy('created_at', 'desc').get();
+    allProjects = projectsSnap.docs.map(doc => ({
+      id: doc.id,
+      ...(doc.data() as Omit<ProjectData, 'id' | 'userRole'>),
+      userRole: doc.data().owner_id === user.uid ? 'owner' : 'superadmin'
+    })) as ProjectData[];
   } else {
     // Fetch projects where user is owner or member
-    const { data: ownedProjects } = await supabase
-      .from('projects')
-      .select('*')
-      .eq('owner_id', user!.id)
-      .order('created_at', { ascending: false });
+    const ownedSnap = await adminDb.collection('projects').where('owner_id', '==', user.uid).get();
+    const memberSnap = await adminDb.collection('projects').where('members', 'array-contains', user.uid).get();
 
-    const { data: memberProjects } = await supabase
-      .from('project_members')
-      .select('project_id, role, projects(*)')
-      .eq('user_id', user!.id);
+    const ownedProjects = ownedSnap.docs.map(doc => ({ id: doc.id, ...(doc.data() as Omit<ProjectData, 'id' | 'userRole'>), userRole: 'owner' as const }));
+    const memberProjects = memberSnap.docs
+      .filter(doc => doc.data().owner_id !== user.uid)
+      .map(doc => ({ id: doc.id, ...(doc.data() as Omit<ProjectData, 'id' | 'userRole'>), userRole: 'editor' as const })); // Defaults to editor if member
 
-    // Deduplicate: filter out member projects where the user is already the owner
-    const ownedIds = new Set((ownedProjects || []).map((p) => p.id));
-    const filteredMemberProjects = (memberProjects || []).filter(
-      (m: { project_id: string }) => !ownedIds.has(m.project_id)
-    );
-
-    allProjects = [
-      ...(ownedProjects || []).map((p) => ({ ...p, userRole: 'owner' as const })),
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ...filteredMemberProjects.map((m: { projects: any; role: string }) => ({
-        ...(Array.isArray(m.projects) ? m.projects[0] : m.projects || {}),
-        userRole: m.role,
-      })).filter((p) => p.id), // Filter out missing/null projects
-    ];
+    allProjects = [...ownedProjects, ...memberProjects].sort((a, b) => 
+      new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    ) as ProjectData[];
   }
 
-  // PRE-FETCH OPTIMIZADO (Elimina N+1 de ProjectCard)
+  // PRE-FETCH OPTIMIZADO
   const projectIds = allProjects.map(p => p.id);
 
   // 1. Fetch de Alertas
-  const { data: allAlerts } = await supabase
-    .from('alerts')
-    .select('project_id')
-    .in('project_id', projectIds)
-    .eq('is_read', false);
+  const unreadAlertsMap: Record<string, number> = {};
+  if (projectIds.length > 0) {
+    // Firestore 'in' query supports max 10 values. We chunk it.
+    const chunkedIds = [];
+    for (let i = 0; i < projectIds.length; i += 10) {
+      chunkedIds.push(projectIds.slice(i, i + 10));
+    }
+    for (const chunk of chunkedIds) {
+      const alertsSnap = await adminDb.collection('alerts')
+        .where('project_id', 'in', chunk)
+        .where('is_read', '==', false)
+        .get();
+      alertsSnap.docs.forEach(doc => {
+        const pid = doc.data().project_id;
+        unreadAlertsMap[pid] = (unreadAlertsMap[pid] || 0) + 1;
+      });
+    }
+  }
 
-  const unreadAlertsMap = (allAlerts || []).reduce((acc: Record<string, number>, alert) => {
-    acc[alert.project_id] = (acc[alert.project_id] || 0) + 1;
-    return acc;
-  }, {});
-
-  // 2. Fetch de Partidas y Actividades
-  const { data: allPartidas } = await supabase
-    .from('partidas')
-    .select('project_id, items(activities(*))')
-    .in('project_id', projectIds);
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // 2. Fetch de Actividades y Daily Progress
   const activitiesByProject: Record<string, any[]> = {};
   const allActivityIds: string[] = [];
 
-  (allPartidas || []).forEach(p => {
-    const projId = p.project_id;
-    if (!activitiesByProject[projId]) activitiesByProject[projId] = [];
+  if (projectIds.length > 0) {
+    const chunkedIds = [];
+    for (let i = 0; i < projectIds.length; i += 10) {
+      chunkedIds.push(projectIds.slice(i, i + 10));
+    }
     
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const acts = (p.items || []).flatMap((i: any) => i.activities || []);
-    activitiesByProject[projId].push(...acts);
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-    allActivityIds.push(...acts.map((a: any) => a.id));
-  });
-
-  // 3. Fetch de Daily Progress
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let allDailyProgress: any[] = [];
-  if (allActivityIds.length > 0) {
-    const { data: dpData } = await supabase
-      .from('daily_progress')
-      .select('*')
-      .in('activity_id', allActivityIds);
-    allDailyProgress = dpData || [];
+    for (const chunk of chunkedIds) {
+      const activitiesSnap = await adminDb.collection('gantt_elements')
+        .where('project_id', 'in', chunk)
+        .where('type', '==', 'activity')
+        .get();
+      
+      activitiesSnap.docs.forEach(doc => {
+        const act = { id: doc.id, ...doc.data() } as { id: string; project_id: string; [key: string]: unknown };
+        const pid = act.project_id;
+        if (!activitiesByProject[pid]) activitiesByProject[pid] = [];
+        activitiesByProject[pid].push(act);
+        allActivityIds.push(doc.id);
+      });
+    }
   }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const dailyProgressByActivity = allDailyProgress.reduce((acc: Record<string, any[]>, dp) => {
+  // 3. Fetch de Daily Progress
+  const allDailyProgress: any[] = [];
+  if (allActivityIds.length > 0) {
+    const chunkedActIds = [];
+    for (let i = 0; i < allActivityIds.length; i += 10) {
+      chunkedActIds.push(allActivityIds.slice(i, i + 10));
+    }
+
+    for (const chunk of chunkedActIds) {
+      const dpSnap = await adminDb.collection('daily_progress')
+        .where('activity_id', 'in', chunk)
+        .get();
+      allDailyProgress.push(...dpSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }
+  }
+
+  const dailyProgressByActivity = allDailyProgress.reduce((acc: Record<string, any[]>, dp: any) => {
     if (!acc[dp.activity_id]) acc[dp.activity_id] = [];
     acc[dp.activity_id].push(dp);
     return acc;
@@ -159,7 +170,6 @@ export default async function DashboardPage() {
 
   return (
     <div className="p-8 max-w-7xl mx-auto fade-in">
-      {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-3xl font-bold text-surface-100">Mis Proyectos</h1>
@@ -170,7 +180,6 @@ export default async function DashboardPage() {
         <NewProjectButton />
       </div>
 
-      {/* Projects Grid */}
       {allProjects.length === 0 ? (
         <div className="glass-card p-12 text-center">
           <div className="w-16 h-16 rounded-full bg-accent-400/10 flex items-center justify-center mx-auto mb-4">

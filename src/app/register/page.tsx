@@ -1,89 +1,83 @@
 'use client';
 
 import { useState } from 'react';
-import { createClient } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
+import { doc, setDoc } from 'firebase/firestore';
+import { useFirebase } from '@/hooks/useFirebase';
 
 export const dynamic = 'force-dynamic';
 
 export default function RegisterPage() {
-  const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [fullName, setFullName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
   const router = useRouter();
-  const supabase = createClient();
+  const { auth, db } = useFirebase();
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
 
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: {
-          full_name: fullName,
-        },
-        emailRedirectTo: `${window.location.origin}/auth/callback`,
-      },
-    });
+    try {
+      // 1. Crear usuario en Firebase Auth
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const user = userCredential.user;
 
-    if (error) {
-      setError(error.message);
-      setLoading(false);
-    } else {
-      setSuccess(true);
+      // 2. Actualizar displayName
+      await updateProfile(user, { displayName: fullName });
+
+      // 3. Crear documento de perfil en Firestore (reemplazo de trigger handle_new_user)
+      await setDoc(doc(db, 'users', user.uid), {
+        full_name: fullName,
+        avatar_url: '',
+        created_at: new Date().toISOString()
+      });
+
+      // 4. Autenticar en Next.js Edge (Crear Cookie)
+      const idToken = await user.getIdToken();
+      const response = await fetch('/api/login', {
+        headers: { Authorization: `Bearer ${idToken}` },
+      });
+
+      if (response.ok) {
+        router.push('/dashboard');
+        router.refresh();
+      } else {
+        setError('Error al iniciar sesión automáticamente tras el registro.');
+        setLoading(false);
+      }
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        setError(err.message || 'Error durante el registro');
+      } else {
+        setError('Error durante el registro');
+      }
       setLoading(false);
     }
   };
 
-  if (success) {
-    return (
-      <main className="min-h-screen flex items-center justify-center p-6">
-        <div className="w-full max-w-md fade-in">
-          <div className="glass-card p-8 text-center">
-            <div className="w-16 h-16 rounded-full bg-accent-500/20 flex items-center justify-center mx-auto mb-4">
-              <svg className="w-8 h-8 text-accent-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-              </svg>
-            </div>
-            <h2 className="text-xl font-bold text-surface-100 mb-2">¡Cuenta Creada!</h2>
-            <p className="text-sm text-surface-200/60 mb-6">
-              Revisa tu correo electrónico para confirmar tu cuenta.
-            </p>
-            <Link href="/login" className="btn-primary inline-block">
-              Ir a Iniciar Sesión
-            </Link>
-          </div>
-        </div>
-      </main>
-    );
-  }
-
   return (
     <main className="min-h-screen flex items-center justify-center p-6">
       <div className="w-full max-w-md fade-in">
-        {/* Header */}
         <div className="text-center mb-8">
           <Link href="/" className="inline-block mb-6">
-            <div className="inline-flex items-center justify-center w-14 h-14 rounded-xl bg-gradient-to-br from-primary-600 to-primary-400 shadow-lg shadow-primary-500/20">
-              <svg className="w-7 h-7 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+            <div className="inline-flex items-center justify-center w-14 h-14 rounded-xl bg-gradient-to-br from-accent-500 to-accent-400 shadow-lg shadow-accent-400/25">
+              <svg className="w-7 h-7 text-primary-800" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
               </svg>
             </div>
           </Link>
           <h1 className="text-2xl font-bold text-surface-100">Crear Cuenta</h1>
           <p className="text-sm text-surface-200/60 mt-2">
-            Regístrate para controlar tus proyectos
+            Únete y comienza a planificar tus proyectos
           </p>
         </div>
 
-        {/* Form Card */}
         <div className="glass-card p-8">
           <form onSubmit={handleRegister} className="space-y-5">
             <div>
@@ -94,9 +88,8 @@ export default function RegisterPage() {
                 id="fullName"
                 type="text"
                 value={fullName}
-                autoComplete="name"
                 onChange={(e) => setFullName(e.target.value)}
-                placeholder="Juan Pérez"
+                placeholder="Ej. Juan Pérez"
                 required
                 className="input-field"
               />
@@ -152,11 +145,10 @@ export default function RegisterPage() {
           </form>
         </div>
 
-        {/* Footer */}
         <p className="text-center text-sm text-surface-200/50 mt-6">
           ¿Ya tienes cuenta?{' '}
-          <Link href="/login" className="text-primary-400 hover:text-primary-300 font-medium">
-            Inicia Sesión
+          <Link href="/login" className="text-accent-400 hover:text-accent-300 font-medium">
+            Inicia sesión
           </Link>
         </p>
       </div>

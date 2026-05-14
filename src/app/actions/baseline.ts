@@ -1,74 +1,69 @@
 'use server';
 
-import { createClient } from '@/lib/supabase/server';
+import { adminDb } from '@/lib/firebase/server';
+import { getTokens } from 'next-firebase-auth-edge';
+import { cookies } from 'next/headers';
 import { revalidatePath } from 'next/cache';
 
 export async function setProjectBaseline(projectId: string) {
-  const supabase = await createClient();
+  // Validate owner using next-firebase-auth-edge tokens
+  const cookieStore = await cookies();
+  const tokens = await getTokens(cookieStore, {
+    apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY!,
+    cookieName: 'AuthToken',
+    cookieSignatureKeys: ['secret-key-for-signing-cookies'],
+    serviceAccount: {
+      projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID!,
+      clientEmail: process.env.FIREBASE_ADMIN_CLIENT_EMAIL!,
+      privateKey: process.env.FIREBASE_ADMIN_PRIVATE_KEY?.replace(/\\n/g, "\n")!,
+    }
+  });
 
-  // Validate owner
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { success: false, error: 'No autorizado' };
+  if (!tokens) return { success: false, error: 'No autorizado' };
+  const userId = tokens.decodedToken.uid;
 
-  const { data: project } = await supabase
-    .from('projects')
-    .select('owner_id')
-    .eq('id', projectId)
-    .single();
+  const projectRef = adminDb.collection('projects').doc(projectId);
+  const projectDoc = await projectRef.get();
 
-  if (!project || project.owner_id !== user.id) {
+  if (!projectDoc.exists || projectDoc.data()?.owner_id !== userId) {
     return { success: false, error: 'Solo el dueño puede fijar la línea base' };
   }
 
-  // To set the baseline, we need to copy start_date -> baseline_start and end_date -> baseline_end
-  // for all activities that belong to items that belong to partidas that belong to the project.
-  
-  // 1. Get all activities for the project
-  const { data: partidas, error: partidasError } = await supabase
-    .from('partidas')
-    .select('items(activities(*))')
-    .eq('project_id', projectId);
+  // Get all activities for this project from the new flattened gantt_elements collection
+  const ganttRef = adminDb.collection('gantt_elements');
+  const activitiesSnapshot = await ganttRef
+    .where('project_id', '==', projectId)
+    .where('type', '==', 'activity')
+    .get();
 
-  if (partidasError || !partidas) {
-    return { success: false, error: 'Error al obtener actividades' };
-  }
-
-  // Flatten the activities
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const activitiesToUpdate: any[] = [];
-  
-  for (const p of partidas) {
-    if (!p.items) continue;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    for (const i of p.items as any[]) {
-      if (!i.activities) continue;
-      for (const a of i.activities) {
-        if (a.start_date && a.end_date) {
-          activitiesToUpdate.push(a);
-        }
-      }
-    }
-  }
-
-  if (activitiesToUpdate.length === 0) {
+  if (activitiesSnapshot.empty) {
     return { success: true, message: 'No hay actividades para fijar' };
   }
 
-  // Using a loop to update since Supabase doesn't support UPDATE a = b without RPC.
-  // This is acceptable for a few hundred activities and only runs once manually.
-  const updates = activitiesToUpdate.map(act => ({
-    ...act,
-    baseline_start: act.start_date,
-    baseline_end: act.end_date,
-    updated_at: new Date().toISOString()
-  }));
+  // Use Firebase Batch Writes
+  let batch = adminDb.batch();
+  let count = 0;
 
-  const { error: upsertError } = await supabase
-    .from('activities')
-    .upsert(updates, { onConflict: 'id', ignoreDuplicates: false });
+  for (const doc of activitiesSnapshot.docs) {
+    const act = doc.data();
+    if (act.start_date && act.end_date) {
+      batch.update(doc.ref, {
+        baseline_start: act.start_date,
+        baseline_end: act.end_date,
+        updated_at: new Date().toISOString()
+      });
+      count++;
+    }
 
-  if (upsertError) {
-    return { success: false, error: 'Error al guardar la línea base: ' + upsertError.message };
+    if (count >= 400) {
+      await batch.commit();
+      batch = adminDb.batch();
+      count = 0;
+    }
+  }
+
+  if (count > 0) {
+    await batch.commit();
   }
 
   revalidatePath(`/projects/${projectId}`);

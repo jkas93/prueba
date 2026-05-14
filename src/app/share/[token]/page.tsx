@@ -1,10 +1,24 @@
-import { createServerClient } from '@supabase/ssr';
 import { notFound } from 'next/navigation';
 import { ShareContentTabs } from '@/components/project/ShareContentTabs';
 import { format, parseISO, differenceInDays } from 'date-fns';
 import { calculateSCurve } from '@/lib/scurve';
 import { es } from 'date-fns/locale';
 import type { Metadata } from 'next';
+import { adminDb } from '@/lib/firebase/server';
+import type { PartidaWithItems, DailyProgress } from '@/lib/types';
+
+type GanttElement = {
+  id: string;
+  type: 'partida' | 'item' | 'activity';
+  parent_id: string | null;
+  project_id: string;
+  name: string;
+  start_date?: string;
+  end_date?: string;
+  weight?: number;
+  sort_order?: number;
+  created_at?: string;
+};
 
 export const revalidate = 60; // ISR cache por 60 segundos
 export const dynamicParams = true;
@@ -15,17 +29,9 @@ interface Props {
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { token } = await params;
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co',
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder',
-    { cookies: { getAll: () => [], setAll: () => { } } }
-  );
-
-  const { data: project } = await supabase
-    .from('projects')
-    .select('name, description')
-    .eq('share_token', token)
-    .single();
+  
+  const projectsSnap = await adminDb.collection('projects').where('share_token', '==', token).limit(1).get();
+  const project = projectsSnap.empty ? null : projectsSnap.docs[0].data();
 
   return {
     title: project ? `${project.name} — Avance del Proyecto` : 'Proyecto no encontrado',
@@ -45,74 +51,85 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 export default async function SharePage({ params }: Props) {
   const { token } = await params;
 
-  // Para permitir ISR (Static Generation con revalidate) NO debemos usar cookies().
-  // La página se generará estáticamente en el servidor cada 60 segundos.
-  // Nota: Para clientes externos se comportará como anónimo, así que el fix en Supabase (public_read_access_fix.sql) es MANDATORIO a largo plazo.
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co',
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder',
-    {
-      cookies: {
-        getAll: () => [],
-        setAll: () => { }
-      }
-    }
-  );
-
   // Fetch project by share token
-  const { data: project, error } = await supabase
-    .from('projects')
-    .select('*')
-    .eq('share_token', token)
-    .single();
-
-  if (error || !project) {
+  const projectsSnap = await adminDb.collection('projects').where('share_token', '==', token).limit(1).get();
+  
+  if (projectsSnap.empty) {
     notFound();
   }
+  
+  const project = { id: projectsSnap.docs[0].id, ...projectsSnap.docs[0].data() } as any;
 
-  // Fetch nested data
-  const { data: partidas, error: partidasError } = await supabase
-    .from('partidas')
-    .select(`
-      *,
-      items (
-        *,
-        activities (*)
-      )
-    `)
-    .eq('project_id', project.id)
-    .order('sort_order');
+  // Fetch gantt elements
+  const ganttSnap = await adminDb.collection('gantt_elements')
+    .where('project_id', '==', project.id)
+    .orderBy('sort_order')
+    .get();
+
+  const elements = ganttSnap.docs.map(d => ({ id: d.id, ...d.data() } as GanttElement));
+
+  const partidasRaw = elements.filter((e) => e.type === 'partida');
+  const itemsRaw = elements.filter((e) => e.type === 'item');
+  const activitiesRaw = elements.filter((e) => e.type === 'activity');
+
+  const partidas: PartidaWithItems[] = partidasRaw.map((p) => ({
+    id: p.id,
+    project_id: project.id,
+    name: p.name,
+    sort_order: p.sort_order ?? 0,
+    created_at: '',
+    items: itemsRaw
+      .filter((i) => i.parent_id === p.id)
+      .map((i) => ({
+        id: i.id,
+        partida_id: p.id,
+        name: i.name,
+        sort_order: i.sort_order ?? 0,
+        created_at: '',
+        activities: activitiesRaw
+          .filter((a) => a.parent_id === i.id)
+          .map((a) => ({
+            id: a.id,
+            item_id: i.id,
+            name: a.name,
+            start_date: a.start_date ?? '',
+            end_date: a.end_date ?? '',
+            weight: a.weight ?? 1,
+            sort_order: a.sort_order ?? 0,
+            created_at: '',
+            updated_at: '',
+          })),
+      })),
+  }));
 
   // Fetch daily progress
-  const activityIds = (partidas || [])
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .flatMap((p: any) => p.items || [])
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .flatMap((i: any) => i.activities || [])
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .map((a: any) => a.id);
+  const activityIds = activitiesRaw.map((a) => a.id);
+  let dailyProgress: DailyProgress[] = [];
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let dailyProgress: any[] = [];
   if (activityIds.length > 0) {
-    const { data } = await supabase
-      .from('daily_progress')
-      .select('*')
-      .in('activity_id', activityIds)
-      .order('date');
-    dailyProgress = data || [];
+    const chunks: string[][] = [];
+    for (let i = 0; i < activityIds.length; i += 10) {
+      chunks.push(activityIds.slice(i, i + 10));
+    }
+    const progressSnaps = await Promise.all(
+      chunks.map((chunk) =>
+        adminDb.collection('daily_progress').where('activity_id', 'in', chunk).orderBy('date').get()
+      )
+    );
+    dailyProgress = progressSnaps.flatMap((snap) =>
+      snap.docs.map((d) => ({ id: d.id, ...d.data() } as unknown as DailyProgress))
+    );
   }
 
   // Fetch milestones
-  const { data: milestones } = await supabase
-    .from('project_milestones')
-    .select('*')
-    .eq('project_id', project.id)
-    .order('date');
+  const milestonesSnap = await adminDb.collection('project_milestones')
+    .where('project_id', '==', project.id)
+    .orderBy('date')
+    .get();
+  const milestones = milestonesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
 
-  // Detect RLS Block issue: If the exact same project exists but data lengths are zero and perhaps error is empty, 
-  // It's a silent RLS row level security drop.
-  const isRLSBlocked = !partidasError && partidas?.length === 0;
+  // Detect RLS Block issue: No longer applicable for Firebase Admin, but we can keep variable for logic
+  const isRLSBlocked = false;
 
   // Calculate SCurve Data for Executive Summary
   const flatActivities = (partidas || [])

@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/server';
+import { adminDb } from '@/lib/firebase/server';
 import type { Activity, DailyProgress, Alert } from './types';
 import { calculateSCurve, getDeviationSeverity } from './scurve';
 import { format } from 'date-fns';
@@ -14,16 +14,6 @@ interface AlertCheckResult {
   currentDeviation: number;
 }
 
-/**
- * Checks a project's activities and daily progress for deviations
- * that warrant alerts. Returns a list of new alerts to create.
- *
- * @param projectId - The project UUID
- * @param projectStartDate - Project start date (ISO)
- * @param projectEndDate - Project end date (ISO)
- * @param activities - All activities in the project
- * @param dailyProgress - All daily progress entries
- */
 export function evaluateAlerts(
   projectId: string,
   projectStartDate: string,
@@ -109,40 +99,43 @@ export function evaluateAlerts(
   };
 }
 
-/**
- * Saves new alerts to the database, avoiding duplicate alerts
- * for the same activity on the same day.
- */
 export async function saveAlerts(
   alerts: Omit<Alert, 'id' | 'created_at'>[]
 ): Promise<void> {
   if (alerts.length === 0) return;
-  const supabase = await createClient();
   const today = format(new Date(), 'yyyy-MM-dd');
 
-  // Phase 1: Fetch all alerts of the same types for this project today (O(1) query)
+  // Fetch alerts for today
   const alertTypes = Array.from(new Set(alerts.map(a => a.type)));
-  const { data: existingAlerts } = await supabase
-    .from('alerts')
-    .select('type, activity_id')
-    .eq('project_id', alerts[0].project_id)
-    .in('type', alertTypes)
-    .gte('created_at', `${today}T00:00:00`);
+  
+  const existingAlertsSnapshot = await adminDb
+    .collection('alerts')
+    .where('project_id', '==', alerts[0].project_id)
+    .where('type', 'in', alertTypes)
+    .get();
 
-  // Phase 2: Create a Set of existing "keys" to deduplicate locally
+  const existingAlerts = existingAlertsSnapshot.docs
+    .map((docSnap) => docSnap.data() as { type: string; activity_id: string | null; created_at: string })
+    .filter((a) => new Date(a.created_at) >= new Date(`${today}T00:00:00`));
+
   const existingSet = new Set(
-    (existingAlerts || []).map(a => `${a.type}:${a.activity_id || 'global'}`)
+    existingAlerts.map((a) => `${a.type}:${a.activity_id || 'global'}`)
   );
 
-  // Phase 3: Filter out alerts that already exist
-  const newAlerts = alerts.filter(a => {
+  const newAlerts = alerts.filter((a) => {
     const key = `${a.type}:${a.activity_id || 'global'}`;
     return !existingSet.has(key);
   });
 
-  // Phase 4: Bulk insert new alerts
   if (newAlerts.length > 0) {
-    const { error } = await supabase.from('alerts').insert(newAlerts);
-    if (error) console.error('Error saving batch alerts:', error);
+    const batch = adminDb.batch();
+    newAlerts.forEach(alert => {
+      const docRef = adminDb.collection('alerts').doc();
+      batch.set(docRef, {
+        ...alert,
+        created_at: new Date().toISOString()
+      });
+    });
+    await batch.commit();
   }
 }

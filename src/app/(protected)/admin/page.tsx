@@ -1,14 +1,25 @@
 import { getAllUsers } from '@/app/actions/admin';
 import { UserTable } from '@/components/admin/UserTable';
 import { InviteUserForm } from '@/components/admin/InviteUserForm';
-import { createClient } from '@/lib/supabase/server';
+import { getTokens } from 'next-firebase-auth-edge';
+import { cookies } from 'next/headers';
 
 export const dynamic = 'force-dynamic';
 
 export default async function AdminPage() {
   const users = await getAllUsers();
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const cookieStore = await cookies();
+  const tokens = await getTokens(cookieStore, {
+    apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY!,
+    cookieName: 'AuthToken',
+    cookieSignatureKeys: ['secret-key-for-signing-cookies'],
+    serviceAccount: {
+      projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID!,
+      clientEmail: process.env.FIREBASE_ADMIN_CLIENT_EMAIL!,
+      privateKey: (process.env.FIREBASE_ADMIN_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
+    }
+  });
+  const currentUserId = tokens?.decodedToken?.uid ?? '';
 
   return (
     <div className="p-8 max-w-7xl mx-auto fade-in">
@@ -39,7 +50,7 @@ export default async function AdminPage() {
          </h2>
       </div>
 
-      <UserTable users={users} currentUserId={user!.id} />
+      <UserTable users={users} currentUserId={currentUserId} />
       
     </div>
   );

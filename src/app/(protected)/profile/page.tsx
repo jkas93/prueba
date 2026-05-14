@@ -1,46 +1,43 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { createClient } from '@/lib/supabase/client';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
+import { auth, db } from '@/lib/firebase/client';
+import { doc, updateDoc } from 'firebase/firestore';
+import { onAuthStateChanged } from 'firebase/auth';
 
 export default function ProfilePage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
-  const [id, setId] = useState('');
-  const [systemRole, setSystemRole] = useState<'user'|'superadmin'>('user');
+  const [userId, setUserId] = useState('');
+  const [systemRole, setSystemRole] = useState<'user' | 'superadmin'>('user');
   const [successMessage, setSuccessMessage] = useState('');
   
-  const supabase = createClient();
   const router = useRouter();
 
   useEffect(() => {
-    async function getProfile() {
-      setLoading(true);
-      const { data: { user } } = await supabase.auth.getUser();
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (!user) { setLoading(false); return; }
+      setUserId(user.uid);
+      setEmail(user.email || '');
 
-      if (user) {
-        setId(user.id);
-        setEmail(user.email || '');
-
-        const { data } = await supabase
-          .from('profiles')
-          .select('full_name, avatar_url, system_role')
-          .eq('id', user.id)
-          .single();
-
-        if (data) {
+      try {
+        const { getDoc } = await import('firebase/firestore');
+        const userSnap = await getDoc(doc(db, 'users', user.uid));
+        if (userSnap.exists()) {
+          const data = userSnap.data();
           setFullName(data.full_name || '');
           setSystemRole(data.system_role || 'user');
         }
+      } catch (err) {
+        console.error('Error fetching profile:', err);
       }
       setLoading(false);
-    }
-
-    getProfile();
-  }, [supabase]);
+    });
+    return () => unsubscribe();
+  }, []);
 
   const updateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -48,12 +45,10 @@ export default function ProfilePage() {
     setSuccessMessage('');
 
     try {
-      const { error } = await supabase
-        .from('profiles')
-        .update({ full_name: fullName, updated_at: new Date().toISOString() })
-        .eq('id', id);
-
-      if (error) throw error;
+      await updateDoc(doc(db, 'users', userId), {
+        full_name: fullName,
+        updated_at: new Date().toISOString(),
+      });
       
       setSuccessMessage('¡Perfil actualizado con éxito!');
       router.refresh();

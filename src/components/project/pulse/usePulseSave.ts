@@ -1,9 +1,11 @@
 import { useState } from 'react';
-import { createClient } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
 import { triggerProjectAlerts } from '@/app/actions/alerts';
 import { compressImage } from '@/lib/utils/imageCompression';
 import { EditedValues, EnhancedActivity, EnhancedPartida } from './types';
+import { useFirebase } from '@/hooks/useFirebase';
+import { doc, writeBatch } from 'firebase/firestore';
+import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 interface UsePulseSaveProps {
   projectId: string;
@@ -21,7 +23,7 @@ export function usePulseSave({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const supabase = createClient();
+  const { auth, db } = useFirebase();
   const router = useRouter();
 
   const handleSaveAll = async (editedValues: EditedValues) => {
@@ -42,15 +44,15 @@ export function usePulseSave({
     setError(null);
 
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const user = auth.currentUser;
+      if (!user) throw new Error('Usuario no autenticado');
+
       const batchRecords: any[] = [];
       const photoUploads: { activityId: string, files: File[] }[] = [];
 
       for (const activityId of activitiesToSave) {
         const { percent, notes, files, hasRestriction, restrictionReason } = editedValues[activityId];
         
-        // Find activity info
         let activityInfo: EnhancedActivity | null = null;
         activeActivitiesByPartida.forEach((p) => {
           p.items.forEach((i) => {
@@ -62,7 +64,6 @@ export function usePulseSave({
         if (!activityInfo) continue;
         const info = activityInfo as EnhancedActivity;
 
-        // Validation
         const proposedPercent = parseFloat(percent || '0');
         const previousTodayPercent = info.existingTodayPercent ? Number(info.existingTodayPercent) : 0;
         const accumulatedWithoutToday = info.totalProgress - previousTodayPercent;
@@ -84,15 +85,17 @@ export function usePulseSave({
           activity_id: activityId,
           date: selectedDate,
           progress_percent: finalPercent,
-          notes: finalNotes,
-          created_by: user?.id,
+          notes: finalNotes || '',
+          created_by: user.uid,
           photo_urls: info.existingTodayPhotos || [],
           has_restriction: finalRestriction,
-          restriction_reason: finalReason
+          restriction_reason: finalReason || '',
+          created_at: new Date().toISOString()
         });
       }
 
       // Phase 1: Upload Photos
+      const storage = getStorage();
       for (const upload of photoUploads) {
         const record = batchRecords.find(r => r.activity_id === upload.activityId);
         if (!record) continue;
@@ -101,36 +104,24 @@ export function usePulseSave({
         for (const file of upload.files) {
           const compressedFile = await compressImage(file);
           const fileName = `${projectId}/${upload.activityId}/${selectedDate}_${Math.random().toString(36).substring(7)}.webp`;
-          const { error: uploadError, data } = await supabase.storage
-            .from('evidence')
-            .upload(fileName, compressedFile);
-
-          if (!uploadError && data?.path) {
-            const { data: publicUrlData } = supabase.storage.from('evidence').getPublicUrl(data.path);
-            photoUrls.push(publicUrlData.publicUrl);
-          }
+          const storageRef = ref(storage, `evidence/${fileName}`);
+          
+          await uploadBytes(storageRef, compressedFile);
+          const downloadUrl = await getDownloadURL(storageRef);
+          photoUrls.push(downloadUrl);
         }
         record.photo_urls = [...record.photo_urls, ...photoUrls];
       }
 
-      // Phase 2: Massive Batch Upsert
-      const { error: batchError } = await supabase
-        .from('daily_progress')
-        .upsert(batchRecords, { onConflict: 'activity_id,date' });
-
-      if (batchError) {
-        if (batchError.message.includes('photo_urls') || batchError.details?.includes('photo_urls')) {
-          const recordsWithoutPhotos = batchRecords.map(({ photo_urls, ...rest }) => rest);
-          const { error: fallbackError } = await supabase
-            .from('daily_progress')
-            .upsert(recordsWithoutPhotos, { onConflict: 'activity_id,date' });
-          
-          if (fallbackError) throw fallbackError;
-          setError('Los avances se guardaron pero las fotos no pudieron almacenarse (Error de esquema).');
-        } else {
-          throw batchError;
-        }
+      // Phase 2: Massive Batch Upsert to Firebase
+      // Using composite ID to ensure upsert behavior similar to Postgres composite unique key
+      const batch = writeBatch(db);
+      for (const record of batchRecords) {
+        const docId = `${record.activity_id}_${record.date}`;
+        const ref = doc(db, 'daily_progress', docId);
+        batch.set(ref, record, { merge: true });
       }
+      await batch.commit();
 
       onSaveSuccess();
       triggerProjectAlerts(projectId).catch(console.error);
