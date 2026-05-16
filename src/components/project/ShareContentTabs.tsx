@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { GanttView } from '@/components/gantt/GanttView';
 import { SCurveChart } from '@/components/charts/SCurveChart';
 import { PublicDailyProgressView } from './PublicDailyProgressView';
+import { PublicItemValidationView } from './PublicItemValidationView';
 import type { Project, PartidaWithItems, DailyProgress } from '@/lib/types';
 
 interface Props {
@@ -14,7 +15,7 @@ interface Props {
 }
 
 export function ShareContentTabs({ project, partidas, dailyProgress, milestones }: Props) {
-  const [activeTab, setActiveTab] = useState<'gantt' | 'scurve' | 'daily'>('gantt');
+  const [activeTab, setActiveTab] = useState<'gantt' | 'scurve' | 'daily' | 'validation'>('gantt');
 
   return (
     <div className="space-y-6">
@@ -68,6 +69,20 @@ export function ShareContentTabs({ project, partidas, dailyProgress, milestones 
               <div className="absolute bottom-[-1px] left-0 w-full h-0.5 bg-accent-500 rounded-t-full shadow-[0_-2px_8px_rgba(247,194,14,0.5)]" />
             )}
           </button>
+          
+          <button
+            onClick={() => setActiveTab('validation')}
+            className={`pb-4 pt-2 px-1 text-sm font-bold tracking-wide uppercase transition-all whitespace-nowrap relative ${
+              activeTab === 'validation'
+                ? 'text-accent-500'
+                : 'text-surface-300 hover:text-surface-100'
+            }`}
+          >
+            Validación de Actividades
+            {activeTab === 'validation' && (
+              <div className="absolute bottom-[-1px] left-0 w-full h-0.5 bg-accent-500 rounded-t-full shadow-[0_-2px_8px_rgba(247,194,14,0.5)]" />
+            )}
+          </button>
         </div>
       </div>
 
@@ -100,6 +115,15 @@ export function ShareContentTabs({ project, partidas, dailyProgress, milestones 
           <section className="animate-fade-in">
             <PublicDailyProgressView
               project={project}
+              partidas={partidas || []}
+              dailyProgress={dailyProgress}
+            />
+          </section>
+        )}
+
+        {activeTab === 'validation' && (
+          <section className="animate-fade-in">
+            <PublicItemValidationView
               partidas={partidas || []}
               dailyProgress={dailyProgress}
             />
