@@ -161,32 +161,25 @@ export function PublicItemValidationView({ partidas, dailyProgress }: Props) {
     <ErrorBoundary>
       <div className="space-y-6 fade-in">
         <div className="bg-white p-4 md:p-6 rounded-2xl shadow-sm border border-surface-700">
-          <div className="mb-6 pb-4 border-b border-surface-700">
-
-            <p className="text-surface-200 text-sm">
-              Estructura organizada por Servicios Principales. Despliega cada servicio para validar sus ítems y el avance físico acumulado a la fecha.
-            </p>
-          </div>
-          
           <div className="space-y-6">
             {services.map(service => (
               <div key={service.name} className="border border-surface-700/50 rounded-xl overflow-hidden shadow-sm bg-white">
                 {/* Service Header (Accordion Toggle) */}
                 <button 
                   onClick={() => toggleService(service.name)}
-                  className="w-full bg-gradient-to-r from-primary-900 to-primary-800 px-5 py-4 flex items-center justify-between hover:from-primary-800 hover:to-primary-700 transition-colors text-left"
+                  className={`w-full bg-white px-5 py-4 flex items-center justify-between hover:bg-surface-50 transition-colors text-left ${openServices[service.name] ? 'border-b border-surface-700/30' : ''}`}
                 >
                   <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center shrink-0">
-                      <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 002-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
+                    <div className="w-8 h-8 rounded-lg bg-primary-50 border border-primary-100 flex items-center justify-center shrink-0">
+                      <svg className="w-5 h-5 text-primary-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 002-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
                     </div>
                     <div>
-                      <span className="text-[10px] uppercase tracking-wider text-primary-200 font-bold block mb-0.5">Servicio</span>
-                      <h3 className="font-bold text-lg text-white">{service.name}</h3>
+                      <span className="text-[10px] uppercase tracking-wider text-surface-400 font-bold block mb-0.5">Servicio</span>
+                      <h3 className="font-bold text-lg text-primary-900">{service.name}</h3>
                     </div>
                   </div>
                   <svg 
-                    className={`w-6 h-6 text-primary-200 transition-transform duration-300 ${openServices[service.name] ? 'rotate-180' : ''}`} 
+                    className={`w-6 h-6 text-surface-400 transition-transform duration-300 ${openServices[service.name] ? 'rotate-180' : ''}`} 
                     fill="none" viewBox="0 0 24 24" stroke="currentColor"
                   >
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
