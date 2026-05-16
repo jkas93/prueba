@@ -27,15 +27,15 @@ export function PublicItemValidationView({ partidas, dailyProgress }: Props) {
     // 1. Deep clone
     const newPartidas: PartidaWithItems[] = JSON.parse(JSON.stringify(partidas));
 
-    // 2. Define moves
+    // 2. Define moves (extracting activities to become items as per quote)
     const moves = [
       { name: 'Bandas de casco: Desmontaje de banda de casco Backup, Inst. de tapa metálica en el chute', toPartida: 'BANDA DE CASCOS', toItem: 'Bandas de casco' },
       { name: 'Bandas de casco: Traslado y acopio de piezas desmontadas de BC Backup', toPartida: 'BANDA DE CASCOS', toItem: 'Bandas de casco' },
-      { name: 'Archa B1: Inst. Bandejas electricas nuevas - Pt. 01', toPartida: 'REUBICACIÓN ARCHA B1', toItem: 'Archa B1: Eléctrico' },
-      { name: 'Archa B1: Inst. de cables de acometida y tierra', toPartida: 'REUBICACIÓN ARCHA B1', toItem: 'Archa B1: Eléctrico' },
-      { name: 'Archa B1: Inst. Bandejas electricas nuevas - Pt. 02', toPartida: 'REUBICACIÓN ARCHA B1', toItem: 'Archa B1: Eléctrico' },
-      { name: 'Archa D3: Inst. Bandejas electricas nuevas.', toPartida: 'REUBICACIÓN ARCHA D3', toItem: 'Archa D3: Eléctrico' },
-      { name: 'Tin Hood D4: Fabricar Ducto Inox. y soportes', toPartida: 'REUBICACIÓN TIN HOOD B1', toItem: 'Tin Hood B1: Mecánico' },
+      { name: 'Archa B1: Inst. Bandejas electricas nuevas - Pt. 01', toPartida: 'REUBICACIÓN ARCHA B1', toItem: 'Archa B1 (D4): Suministro de bandeja' },
+      { name: 'Archa B1: Inst. de cables de acometida y tierra', toPartida: 'REUBICACIÓN ARCHA B1', toItem: 'Archa B1 (D4): Suministro de acometidas y tierras' },
+      { name: 'Archa B1: Inst. Bandejas electricas nuevas - Pt. 02', toPartida: 'REUBICACIÓN ARCHA B1', toItem: 'Archa B1 (D4): Suministro de bandeja' },
+      { name: 'Archa D3: Inst. Bandejas electricas nuevas.', toPartida: 'REUBICACIÓN ARCHA D3', toItem: 'Archa D3: Suministro de bandeja' },
+      { name: 'Tin Hood D4: Fabricar Ducto Inox. y soportes', toPartida: 'REUBICACIÓN TIN HOOD B1', toItem: 'Tin Hood B1 a D4: Mecánico' },
     ];
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -116,9 +116,20 @@ export function PublicItemValidationView({ partidas, dailyProgress }: Props) {
           totalWeight += w;
           weightedProgress += (actAcc * w);
         });
-
         const itemAcc = totalWeight > 0 ? (weightedProgress / totalWeight) : 0;
-        const itemName = (i.name === 'Ítem por Defecto') ? p.name : i.name;
+
+        // Mapeo exacto de nombres según la cotización
+        const itemNameMap: Record<string, string> = {
+          'Archa B1: Mecánico': 'Archa B1 (D4): Mecánico',
+          'Archa B1: Eléctrico': 'Archa B1 (D4): Eléctrico',
+          'Tin Hood B1: Mecánico': 'Tin Hood B1 a D4: Mecánico',
+          'REUBICACIÓN DFE B1': 'DFE B1 a D4: Mecánico', // Mapeo inferido de la imagen
+        };
+
+        let itemName = (i.name === 'Ítem por Defecto') ? p.name : i.name;
+        if (itemNameMap[itemName]) {
+          itemName = itemNameMap[itemName];
+        }
 
         const processedItem = {
           ...i,
@@ -128,7 +139,7 @@ export function PublicItemValidationView({ partidas, dailyProgress }: Props) {
 
         if (isBanda) {
           serviceBanda.items.push(processedItem);
-        } else if (i.name === 'MOVIMIENTO DE INTERFERENCIAS') {
+        } else if (itemName === 'MOVIMIENTO DE INTERFERENCIAS') {
           serviceInterferencias.items.push(processedItem);
         } else {
           serviceArchas.items.push(processedItem);
@@ -136,7 +147,65 @@ export function PublicItemValidationView({ partidas, dailyProgress }: Props) {
       }
     }
 
-    return [serviceBanda, serviceArchas, serviceInterferencias].filter(s => s.items.length > 0);
+    // 4. Forzar los 19 ítems exactos de la cotización para "MOVIMIENTO DE ARCHAS OWENS"
+    const archaQuoteItems = [
+      'Archa B1 (D4): Mecánico',
+      'Archa B1 (D4): Eléctrico',
+      'Archa B1 (D4): Desinstalación, suministro e nuevo instalación de platinas',
+      'Archa B1 (D4): Suministro de bandeja',
+      'Archa B1 (D4): Suministro de acometidas y tierras',
+      'Archa D3: Mecánico',
+      'Archa D3: Eléctrico',
+      'Archa D3: Suministro de bandeja',
+      'Tin Hood B1 a D4: Mecánico',
+      'Tin Hood B1 a D4: Eléctrico',
+      'DFE B1 a D4: Mecánico',
+      'DFE B1 a D4: Eléctrico',
+      'DFE D3: Mecánico',
+      'DFE D3: Eléctrico',
+      'Relocalización CFU y conexiones: Mecánico',
+      'Relocalización CFU y conexiones: Eléctrico',
+      'Relocalización CFU y conexiones: Suministro de bandeja',
+      'Relocalización CFU y conexiones: Suministro de acometidas y tierras',
+      'Acompañamiento al comsionamiento y puesta en marcha'
+    ];
+
+    const finalArchasItems = archaQuoteItems.map(quoteName => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const existing = serviceArchas.items.filter((i: any) => i.displayName === quoteName);
+      if (existing.length > 0) {
+        // Fusionar si hay varios ítems que terminaron con el mismo nombre mapeado
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const mergedActivities = existing.flatMap((e: any) => e.activities);
+        let tW = 0; let wP = 0;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        mergedActivities.forEach((act: any) => {
+          const actAcc = Math.min(accumulatedProgress[act.id] || 0, 100);
+          const w = act.weight || 1;
+          tW += w; wP += (actAcc * w);
+        });
+        return {
+          id: existing[0].id,
+          displayName: quoteName,
+          activities: mergedActivities,
+          accumulatedPercent: tW > 0 ? (wP / tW) : 0
+        };
+      } else {
+        return {
+          id: `virtual-empty-${quoteName.replace(/\s+/g, '-')}`,
+          displayName: quoteName,
+          activities: [],
+          accumulatedPercent: 0
+        };
+      }
+    });
+
+    // Añadir ítems "huérfanos" (que no están en los 19) al final por si acaso
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const lostItems = serviceArchas.items.filter((i: any) => !archaQuoteItems.includes(i.displayName));
+    serviceArchas.items = [...finalArchasItems, ...lostItems];
+
+    return [serviceBanda, serviceArchas, serviceInterferencias].filter(s => s.items.length > 0 || s.name === 'MOVIMIENTO DE ARCHAS OWENS');
   }, [partidas, accumulatedProgress]);
 
   // State to manage which Services are open in the accordion
