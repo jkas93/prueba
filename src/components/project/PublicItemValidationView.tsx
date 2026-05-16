@@ -98,6 +98,8 @@ export function PublicItemValidationView({ partidas, dailyProgress }: Props) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const serviceBanda: any = { name: 'BANDA DE CASCOS', items: [] };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const serviceInterferencias: any = { name: 'MOVIMIENTO DE INTERFERENCIAS', items: [] };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const serviceArchas: any = { name: 'MOVIMIENTO DE ARCHAS OWENS', items: [] };
 
     for (const p of finalPartidas) {
@@ -126,19 +128,22 @@ export function PublicItemValidationView({ partidas, dailyProgress }: Props) {
 
         if (isBanda) {
           serviceBanda.items.push(processedItem);
+        } else if (i.name === 'MOVIMIENTO DE INTERFERENCIAS') {
+          serviceInterferencias.items.push(processedItem);
         } else {
           serviceArchas.items.push(processedItem);
         }
       }
     }
 
-    return [serviceBanda, serviceArchas].filter(s => s.items.length > 0);
+    return [serviceBanda, serviceArchas, serviceInterferencias].filter(s => s.items.length > 0);
   }, [partidas, accumulatedProgress]);
 
   // State to manage which Services are open in the accordion
   const [openServices, setOpenServices] = useState<Record<string, boolean>>({
     'BANDA DE CASCOS': true,
-    'MOVIMIENTO DE ARCHAS OWENS': true
+    'MOVIMIENTO DE ARCHAS OWENS': true,
+    'MOVIMIENTO DE INTERFERENCIAS': true
   });
 
   // Items are closed by default to keep the UI clean
@@ -198,30 +203,32 @@ export function PublicItemValidationView({ partidas, dailyProgress }: Props) {
                           onClick={() => toggleItem(item.id)}
                           className="w-full px-4 py-3 bg-white border-b border-surface-700/40 hover:bg-surface-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-left transition-colors"
                         >
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 w-full sm:w-auto">
                             <svg className="w-5 h-5 text-accent-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
                             <span className="text-[10px] uppercase tracking-wider text-surface-400 font-bold bg-surface-100 px-2 py-0.5 rounded-md shrink-0">Ítem</span>
                             <span className="text-primary-900 font-semibold">{item.displayName}</span>
                           </div>
                           
-                          <div className="flex items-center gap-3 pl-8 sm:pl-0 shrink-0">
-                            <div className="hidden sm:block w-24 md:w-32 h-2.5 bg-surface-200/20 rounded-full overflow-hidden">
+                          <div className="flex items-center justify-between sm:justify-end w-full sm:w-auto gap-3 pl-7 sm:pl-0 shrink-0">
+                            <div className="w-full sm:w-24 md:w-32 h-2.5 bg-surface-200/20 rounded-full overflow-hidden flex-1 sm:flex-none">
                               <div 
                                 className={`h-full rounded-full transition-all duration-500 ${item.accumulatedPercent >= 100 ? 'bg-success-500' : 'bg-primary-500'}`} 
                                 style={{ width: `${Math.min(item.accumulatedPercent, 100)}%` }}
                               ></div>
                             </div>
-                            <span className={`text-xs font-bold px-2 py-1.5 rounded-md min-w-[75px] text-center shadow-sm ${
-                              item.accumulatedPercent >= 100 ? 'bg-success-50 text-success-700 border border-success-200' : 'bg-white text-primary-700 border border-surface-700'
-                            }`}>
-                              {item.accumulatedPercent.toFixed(2)}%
-                            </span>
-                            <svg 
-                              className={`w-5 h-5 text-surface-400 transition-transform duration-300 ml-1 ${openItems[item.id] ? 'rotate-180' : ''}`} 
-                              fill="none" viewBox="0 0 24 24" stroke="currentColor"
-                            >
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                            </svg>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className={`text-xs font-bold px-2 py-1.5 rounded-md min-w-[75px] text-center shadow-sm ${
+                                item.accumulatedPercent >= 100 ? 'bg-success-50 text-success-700 border border-success-200' : 'bg-white text-primary-700 border border-surface-700'
+                              }`}>
+                                {item.accumulatedPercent.toFixed(2)}%
+                              </span>
+                              <svg 
+                                className={`w-5 h-5 text-surface-400 transition-transform duration-300 ml-1 ${openItems[item.id] ? 'rotate-180' : ''}`} 
+                                fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                              >
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                              </svg>
+                            </div>
                           </div>
                         </button>
                         
@@ -232,18 +239,18 @@ export function PublicItemValidationView({ partidas, dailyProgress }: Props) {
                               const acc = Math.min(accumulatedProgress[act.id] || 0, 100);
                               return (
                                 <div key={act.id} className="flex flex-col sm:flex-row sm:items-center justify-between bg-white p-3 rounded-lg border border-surface-700/40 hover:border-surface-600 hover:shadow-sm transition-all gap-3">
-                                  <div className="flex items-start gap-3">
+                                  <div className="flex items-start gap-3 w-full sm:w-auto">
                                     <svg className="w-4 h-4 text-surface-400 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
                                     <span className="text-sm text-surface-100 font-medium leading-tight">{act.name}</span>
                                   </div>
-                                  <div className="flex items-center gap-3 shrink-0 pl-7 sm:pl-0">
-                                    <div className="hidden sm:block w-24 h-2 bg-surface-100/10 rounded-full overflow-hidden">
+                                  <div className="flex items-center justify-between sm:justify-end w-full sm:w-auto gap-3 pl-7 sm:pl-0 shrink-0">
+                                    <div className="w-full sm:w-24 h-2 bg-surface-100/10 rounded-full overflow-hidden flex-1 sm:flex-none">
                                       <div 
                                         className={`h-full rounded-full transition-all duration-500 ${acc >= 100 ? 'bg-success-400' : 'bg-accent-500'}`} 
                                         style={{ width: `${acc}%` }}
                                       ></div>
                                     </div>
-                                    <span className={`text-[11px] font-bold px-2 py-1 rounded-md min-w-[65px] text-center ${
+                                    <span className={`text-[11px] font-bold px-2 py-1 rounded-md min-w-[65px] text-center shrink-0 ${
                                       acc >= 100 ? 'bg-success-50 text-success-700 border border-success-200' : 'bg-surface-50 text-surface-400 border border-surface-700'
                                     }`}>
                                       {acc.toFixed(2)}%
