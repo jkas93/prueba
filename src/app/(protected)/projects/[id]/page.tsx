@@ -8,6 +8,7 @@ import { ProjectActionsMenu } from '@/components/project/ProjectActionsMenu';
 import { format, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 import type { PartidaWithItems, DailyProgress, Alert } from '@/lib/types';
+import { FIREBASE_AUTH_CONFIG } from '@/lib/auth/config';
 
 interface Props {
   params: Promise<{ id: string }>;
@@ -29,16 +30,7 @@ export default async function ProjectPage({ params }: Props) {
   const { id } = await params;
 
   const cookieStore = await cookies();
-  const tokens = await getTokens(cookieStore, {
-    apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY!,
-    cookieName: 'AuthToken',
-    cookieSignatureKeys: ['secret-key-for-signing-cookies'],
-    serviceAccount: {
-      projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID!,
-      clientEmail: process.env.FIREBASE_ADMIN_CLIENT_EMAIL!,
-      privateKey: (process.env.FIREBASE_ADMIN_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
-    },
-  });
+  const tokens = await getTokens(cookieStore, FIREBASE_AUTH_CONFIG);
 
   if (!tokens) notFound();
   const userId = tokens.decodedToken.uid;

@@ -35,6 +35,7 @@ export default function RegisterPage() {
       await setDoc(doc(db, 'users', user.uid), {
         full_name: fullName,
         avatar_url: '',
+        system_role: 'user',
         created_at: new Date().toISOString()
       });
 

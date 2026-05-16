@@ -12,7 +12,9 @@ export default async function AdminPage() {
   const tokens = await getTokens(cookieStore, {
     apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY!,
     cookieName: 'AuthToken',
-    cookieSignatureKeys: ['secret-key-for-signing-cookies'],
+    cookieSignatureKeys: process.env.COOKIE_SIGNATURE_KEYS
+      ? process.env.COOKIE_SIGNATURE_KEYS.split(',').map(k => k.trim())
+      : ['cronograma-secret-key-2026'],
     serviceAccount: {
       projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID!,
       clientEmail: process.env.FIREBASE_ADMIN_CLIENT_EMAIL!,

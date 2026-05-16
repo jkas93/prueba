@@ -4,20 +4,12 @@ import { adminDb } from '@/lib/firebase/server';
 import { getTokens } from 'next-firebase-auth-edge';
 import { cookies } from 'next/headers';
 import { revalidatePath } from 'next/cache';
+import { FIREBASE_AUTH_CONFIG } from '@/lib/auth/config';
 
 export async function setProjectBaseline(projectId: string) {
   // Validate owner using next-firebase-auth-edge tokens
   const cookieStore = await cookies();
-  const tokens = await getTokens(cookieStore, {
-    apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY!,
-    cookieName: 'AuthToken',
-    cookieSignatureKeys: ['secret-key-for-signing-cookies'],
-    serviceAccount: {
-      projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID!,
-      clientEmail: process.env.FIREBASE_ADMIN_CLIENT_EMAIL!,
-      privateKey: process.env.FIREBASE_ADMIN_PRIVATE_KEY?.replace(/\\n/g, "\n")!,
-    }
-  });
+  const tokens = await getTokens(cookieStore, FIREBASE_AUTH_CONFIG);
 
   if (!tokens) return { success: false, error: 'No autorizado' };
   const userId = tokens.decodedToken.uid;

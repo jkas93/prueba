@@ -1,0 +1,169 @@
+rules_version = '2';
+
+// ============================================================
+// CRONOGRAMA — Firestore Security Rules
+// ============================================================
+// Despliega con: firebase deploy --only firestore:rules
+// O desde Firebase Console > Firestore > Rules
+//
+// Lógica de seguridad:
+//   - Solo usuarios autenticados acceden a sus datos
+//   - El superadmin (system_role = 'superadmin') tiene acceso global
+//   - La colección /users protege la modificación de system_role
+//   - Los proyectos son visibles por su dueño y por sus miembros
+//   - Los gantt_elements y daily_progress se validan via project_id
+// ============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Funciones Helper ──────────────────────────────────
+    
+    // Verifica que el usuario está autenticado
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // UID del usuario actual
+    function uid() {
+      return request.auth.uid;
+    }
+    
+    // Verifica si el usuario actual es superadmin
+    // (lee su propio documento de perfil)
+    function isSuperadmin() {
+      return isAuthenticated() &&
+        get(/databases/$(database)/documents/users/$(uid())).data.system_role == 'superadmin';
+    }
+    
+    // Verifica si el usuario es dueño de un proyecto
+    function isProjectOwner(projectId) {
+      return isAuthenticated() &&
+        get(/databases/$(database)/documents/projects/$(projectId)).data.owner_id == uid();
+    }
+    
+    // Verifica si el usuario es miembro de un proyecto (owner o en members array)
+    function isProjectMember(projectId) {
+      let project = get(/databases/$(database)/documents/projects/$(projectId)).data;
+      return isAuthenticated() && (
+        project.owner_id == uid() ||
+        (project.members is list && uid() in project.members)
+      );
+    }
+
+
+    // ── /users/{userId} ────────────────────────────────────
+    // Perfiles de usuario — solo el propio usuario o superadmin
+    match /users/{userId} {
+      // Leer: el propio usuario o superadmin
+      allow read: if isAuthenticated() && (uid() == userId || isSuperadmin());
+      
+      // Crear: solo el propio usuario (al registrarse)
+      allow create: if isAuthenticated() && uid() == userId
+        && request.resource.data.system_role == 'user'; // no puede auto-asignarse superadmin
+      
+      // Actualizar: el propio usuario (sin cambiar system_role) o superadmin
+      allow update: if isAuthenticated() && (
+        // El propio usuario puede actualizar todo EXCEPTO system_role
+        (uid() == userId && !('system_role' in request.resource.data.diff(resource.data).affectedKeys()))
+        ||
+        // Superadmin puede cambiar cualquier campo incluyendo system_role
+        isSuperadmin()
+      );
+      
+      // Eliminar: solo superadmin
+      allow delete: if isSuperadmin();
+    }
+
+
+    // ── /projects/{projectId} ──────────────────────────────
+    match /projects/{projectId} {
+      // Leer: dueño, miembros, o superadmin
+      // También permite lectura anónima si existe share_token (para links públicos)
+      allow read: if (
+        isProjectMember(projectId) ||
+        isSuperadmin() ||
+        resource.data.share_token != null // acceso público por share_token
+      );
+      
+      // Crear: cualquier usuario autenticado (como dueño)
+      allow create: if isAuthenticated() && request.resource.data.owner_id == uid();
+      
+      // Actualizar: solo el dueño o superadmin
+      allow update: if isProjectOwner(projectId) || isSuperadmin();
+      
+      // Eliminar: solo el dueño o superadmin
+      allow delete: if isProjectOwner(projectId) || isSuperadmin();
+    }
+
+
+    // ── /gantt_elements/{elementId} ────────────────────────
+    // Contiene partidas, items y actividades aplanados
+    match /gantt_elements/{elementId} {
+      // Leer: miembro del proyecto, o lectura pública si el proyecto tiene share_token
+      allow read: if (
+        isProjectMember(resource.data.project_id) ||
+        isSuperadmin() ||
+        get(/databases/$(database)/documents/projects/$(resource.data.project_id)).data.share_token != null
+      );
+      
+      // Crear: miembro del proyecto
+      allow create: if isAuthenticated() && (
+        isProjectMember(request.resource.data.project_id) ||
+        isSuperadmin()
+      );
+      
+      // Actualizar: miembro del proyecto
+      allow update: if isProjectMember(resource.data.project_id) || isSuperadmin();
+      
+      // Eliminar: dueño del proyecto o superadmin
+      allow delete: if isProjectOwner(resource.data.project_id) || isSuperadmin();
+    }
+
+
+    // ── /daily_progress/{progressId} ───────────────────────
+    match /daily_progress/{progressId} {
+      // Para validar el proyecto necesitamos ir via activity → gantt_element
+      // Usamos el campo project_id que debe estar desnormalizado en daily_progress
+      allow read: if (
+        isProjectMember(resource.data.project_id) ||
+        isSuperadmin() ||
+        get(/databases/$(database)/documents/projects/$(resource.data.project_id)).data.share_token != null
+      );
+      
+      allow create: if isAuthenticated() && (
+        isProjectMember(request.resource.data.project_id) ||
+        isSuperadmin()
+      );
+      
+      allow update: if isProjectMember(resource.data.project_id) || isSuperadmin();
+      
+      allow delete: if isProjectOwner(resource.data.project_id) || isSuperadmin();
+    }
+
+
+    // ── /alerts/{alertId} ──────────────────────────────────
+    match /alerts/{alertId} {
+      allow read: if isProjectMember(resource.data.project_id) || isSuperadmin();
+      allow create: if isAuthenticated() && (
+        isProjectMember(request.resource.data.project_id) || isSuperadmin()
+      );
+      allow update: if isProjectMember(resource.data.project_id) || isSuperadmin();
+      allow delete: if isProjectOwner(resource.data.project_id) || isSuperadmin();
+    }
+
+
+    // ── /admin_audit_log/{logId} ────────────────────────────
+    // Solo superadmins pueden leer/escribir el log de auditoría
+    match /admin_audit_log/{logId} {
+      allow read, write: if isSuperadmin();
+    }
+
+
+    // ── Bloqueo por defecto ─────────────────────────────────
+    // Cualquier colección no listada arriba queda denegada
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
