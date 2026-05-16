@@ -40,31 +40,14 @@ export function TeamModal({ projectId, projectName, isOwner, variant = 'button' 
   const fetchMembers = useCallback(async () => {
     setLoading(true);
     try {
-      const projectSnap = await getDoc(doc(db, 'projects', projectId));
-      if (!projectSnap.exists()) { setLoading(false); return; }
-      
-      const projectData = projectSnap.data();
-      const memberIds: string[] = projectData.members || [];
-
-      const memberProfiles = await Promise.all(
-        memberIds.map(async (uid) => {
-          const userSnap = await getDoc(doc(db, 'users', uid));
-          const userData = userSnap.data();
-          const isOwnerUid = uid === projectData.owner_id;
-          return {
-            user_id: uid,
-            role: isOwnerUid ? 'admin' : (userData?.role || 'viewer'),
-            full_name: userData?.full_name || '',
-            email: userData?.email || '',
-          };
-        })
-      );
+      const { getTeamMembers } = await import('@/app/actions/team');
+      const memberProfiles = await getTeamMembers(projectId);
       setMembers(memberProfiles);
     } catch (err) {
       console.error(err);
     }
     setLoading(false);
-  }, [db, projectId]);
+  }, [projectId]);
 
   useEffect(() => {
     if (isOpen) {
@@ -79,36 +62,16 @@ export function TeamModal({ projectId, projectName, isOwner, variant = 'button' 
     setSearchStatus('');
 
     try {
-      const q = query(collection(db, 'users'), where('email', '==', emailToInvite.trim()));
-      const snap = await getDocs(q);
+      const { addMemberByEmail } = await import('@/app/actions/team');
+      const res = await addMemberByEmail(projectId, emailToInvite.trim());
 
-      if (snap.empty) {
-        setSearchStatus('No se encontró cuenta con ese correo. Deben registrarse primero.');
-        setInviting(false);
-        return;
+      if (!res.success) {
+        setSearchStatus(res.error || 'Error desconocido al añadir');
+      } else {
+        setEmailToInvite('');
+        setSearchStatus(res.message || '¡Añadido correctamente!');
+        fetchMembers();
       }
-
-      const userProfile = snap.docs[0];
-
-      if (members.some(m => m.user_id === userProfile.id)) {
-        setSearchStatus('Este usuario ya es miembro del proyecto.');
-        setInviting(false);
-        return;
-      }
-
-      const projectRef = doc(db, 'projects', projectId);
-      const projectSnap = await getDoc(projectRef);
-      if (projectSnap.exists()) {
-        const existingMembers: string[] = projectSnap.data().members || [];
-        await updateDoc(projectRef, {
-          members: [...existingMembers, userProfile.id]
-        });
-      }
-
-      setEmailToInvite('');
-      setSearchStatus('¡Invitación enviada y usuario añadido!');
-      fetchMembers();
-      
     } catch (err: unknown) {
       console.error(err);
       setSearchStatus('Error: ' + (err instanceof Error ? err.message : String(err)));
@@ -119,11 +82,8 @@ export function TeamModal({ projectId, projectName, isOwner, variant = 'button' 
 
   const changeRole = async (userId: string, newRole: string) => {
     try {
-      await setDoc(doc(db, 'project_member_roles', `${projectId}_${userId}`), {
-        project_id: projectId,
-        user_id: userId,
-        role: newRole,
-      }, { merge: true });
+      const { changeTeamMemberRole } = await import('@/app/actions/team');
+      await changeTeamMemberRole(projectId, userId, newRole);
       fetchMembers();
     } catch (err: unknown) {
       console.error(err);
@@ -133,19 +93,14 @@ export function TeamModal({ projectId, projectName, isOwner, variant = 'button' 
   const removeMember = async (userId: string) => {
     if (!window.confirm('¿Seguro que deseas remover a este miembro?')) return;
     try {
-      const projectRef = doc(db, 'projects', projectId);
-      const projectSnap = await getDoc(projectRef);
-      if (projectSnap.exists()) {
-        const existingMembers: string[] = projectSnap.data().members || [];
-        await updateDoc(projectRef, {
-          members: existingMembers.filter(id => id !== userId)
-        });
-      }
+      const { removeTeamMember } = await import('@/app/actions/team');
+      await removeTeamMember(projectId, userId);
       fetchMembers();
     } catch (err: unknown) {
       console.error(err);
     }
   };
+
 
   return (
     <>
