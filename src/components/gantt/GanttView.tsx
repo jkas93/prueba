@@ -86,10 +86,15 @@ export function GanttView({ projectId, partidas, dailyProgress = [], readonly = 
              task.end_date = e;
           }
           if (updates.weight) task.weight = updates.weight;
-          ganttRef.current.updateTask(taskId);
+          // Use refreshTask (visual re-render only) instead of updateTask
+          // to avoid triggering onAfterTaskUpdate → double Firestore write.
+          ganttRef.current.refreshTask(taskId);
         }
       }
       setEditModal(p => ({ ...p, open: false }));
+      // Brief delay to let Firestore commit the write before the
+      // server re-reads the collection via router.refresh().
+      await new Promise(resolve => setTimeout(resolve, 600));
       router.refresh();
     }
   };

@@ -51,10 +51,14 @@ export function GanttChart({
   const ganttInitialized = useRef(false);
 
   // ──────────────────────────────────────────────────────────────
-  // Guard flag: blocks CRUD event handlers during bulk parse/clear
-  // operations so they don't fire on synthetic "add/delete" events.
+  // Guard flags:
+  //   isParsingRef  — blocks all CRUD handlers during bulk parse/clear
+  //   isDraggingRef — signals that a drag operation is in progress,
+  //                   so onAfterTaskUpdate skips date writes (handled
+  //                   by the dedicated onAfterTaskDrag handler instead)
   // ──────────────────────────────────────────────────────────────
   const isParsingRef = useRef(false);
+  const isDraggingRef = useRef(false);
 
   const { createTask, updateTask, deleteTask, reorderSiblings } = useGanttCRUD();
   const { syncMarkers } = useGanttMarkers();
@@ -209,7 +213,17 @@ export function GanttChart({
         })
       );
 
-      // ── Drag Validation ─────────────────────────────────────
+      // ── Drag Lifecycle ───────────────────────────────────────
+      // onBeforeTaskDrag: set flag so onAfterTaskUpdate knows a drag
+      // is in progress and skips its name-only write.
+      attachedEventIds.push(
+        gantt.attachEvent("onBeforeTaskDrag", () => {
+          isDraggingRef.current = true;
+          return true;
+        })
+      );
+
+      // Drag Validation (hierarchy rules)
       attachedEventIds.push(
         gantt.attachEvent("onBeforeTaskMove", (id: string, parent: string) => {
           const task = gantt.getTask(id) as GanttTaskEntity;
@@ -247,25 +261,35 @@ export function GanttChart({
         })
       );
 
-      // ── Update ──────────────────────────────────────────────
-      // GUARD: skip when we're bulk-parsing data from the server
+      // ── Update (Name only) ───────────────────────────────────
+      // Only saves name changes (from inline editing).
+      // Date changes during drags are handled by onAfterTaskDrag below.
+      // GUARD: skip during bulk parse OR during a drag (drag has its
+      // own handler and also triggers onAfterTaskUpdate internally).
       attachedEventIds.push(
         gantt.attachEvent("onAfterTaskUpdate", async (id: string, task: GanttTaskEntity) => {
-          if (isParsingRef.current) return;
+          if (isParsingRef.current || isDraggingRef.current) return;
           if (!task.db_id || !task.db_type) return;
+          await updateTask(task.db_type, task.db_id, { name: task.text });
+        })
+      );
 
-          const updates: Record<string, unknown> = { name: task.text };
-          
-          if (task.db_type === 'activity') {
-            const sd = task.start_date || new Date();
-            const edRaw = task.end_date || new Date();
-            const edInclusive = subDays(edRaw, 1);
-            updates.start_date = format(sd, 'yyyy-MM-dd');
-            updates.end_date = format(edInclusive, 'yyyy-MM-dd');
-            updates.weight = typeof task.weight === 'string' ? parseFloat(task.weight) : (task.weight || 1);
-          }
-
-          await updateTask(task.db_type, task.db_id, updates);
+      // ── Update (Dates) ───────────────────────────────────────
+      // Fires ONCE after a complete drag-resize or drag-move on the
+      // timeline. Clears isDraggingRef and persists the new dates.
+      attachedEventIds.push(
+        gantt.attachEvent("onAfterTaskDrag", async (id: string) => {
+          isDraggingRef.current = false;
+          if (isParsingRef.current) return;
+          const task = gantt.getTask(id) as GanttTaskEntity;
+          if (!task.db_id || task.db_type !== 'activity') return;
+          const sd = task.start_date || new Date();
+          const edRaw = task.end_date || new Date();
+          const edInclusive = subDays(edRaw, 1);
+          await updateTask('activity', task.db_id, {
+            start_date: format(sd, 'yyyy-MM-dd'),
+            end_date: format(edInclusive, 'yyyy-MM-dd'),
+          });
         })
       );
 

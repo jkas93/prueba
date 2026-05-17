@@ -26,6 +26,11 @@ type GanttElement = {
   sort_order?: number;
 };
 
+// Disable ISR caching for the project page so that edits
+// (dates, names, new tasks) are always reflected immediately
+// after router.refresh() — no stale cached responses.
+export const dynamic = 'force-dynamic';
+
 export default async function ProjectPage({ params }: Props) {
   const { id } = await params;
 
