@@ -77,11 +77,14 @@ export function PublicItemValidationView({ project, partidas, dailyProgress }: P
             if (serviceConfig.item_order && serviceConfig.item_order.length > 0) {
               const indexA = serviceConfig.item_order.indexOf(a.id);
               const indexB = serviceConfig.item_order.indexOf(b.id);
-              if (indexA === -1 && indexB === -1) return a.sort_order - b.sort_order;
-              if (indexA === -1) return 1;
-              if (indexB === -1) return -1;
-              return indexA - indexB;
+              if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+              if (indexA !== -1) return -1;
+              if (indexB !== -1) return 1;
             }
+            
+            const pA = serviceConfig.partida_ids.indexOf(a.partida_id);
+            const pB = serviceConfig.partida_ids.indexOf(b.partida_id);
+            if (pA !== pB) return pA - pB;
             return a.sort_order - b.sort_order;
           })
         };

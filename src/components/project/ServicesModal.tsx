@@ -71,16 +71,20 @@ export function ServicesModal({ project, partidas, isOwner, variant = 'button' }
       displayName: i.name === 'Ítem por Defecto' ? p.name : i.name
     })));
     
-    if (service.item_order && service.item_order.length > 0) {
-      items.sort((a, b) => {
-        const indexA = service.item_order!.indexOf(a.id);
-        const indexB = service.item_order!.indexOf(b.id);
-        if (indexA === -1 && indexB === -1) return 0;
-        if (indexA === -1) return 1;
-        if (indexB === -1) return -1;
-        return indexA - indexB;
-      });
-    }
+    items.sort((a, b) => {
+      if (service.item_order && service.item_order.length > 0) {
+        const indexA = service.item_order.indexOf(a.id);
+        const indexB = service.item_order.indexOf(b.id);
+        if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+        if (indexA !== -1) return -1;
+        if (indexB !== -1) return 1;
+      }
+      
+      const pA = service.partida_ids.indexOf(a.partida_id);
+      const pB = service.partida_ids.indexOf(b.partida_id);
+      if (pA !== pB) return pA - pB;
+      return a.sort_order - b.sort_order;
+    });
     return items;
   };
 
