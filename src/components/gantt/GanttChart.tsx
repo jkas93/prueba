@@ -53,9 +53,8 @@ export function GanttChart({
   // ──────────────────────────────────────────────────────────────
   // Guard flags:
   //   isParsingRef  — blocks all CRUD handlers during bulk parse/clear
-  //   isDraggingRef — signals that a drag operation is in progress,
-  //                   so onAfterTaskUpdate skips date writes (handled
-  //                   by the dedicated onAfterTaskDrag handler instead)
+  //   isDraggingRef — signals a drag is in progress so onAfterTaskUpdate
+  //                   skips name-only writes (dates handled by onAfterTaskDrag)
   // ──────────────────────────────────────────────────────────────
   const isParsingRef = useRef(false);
   const isDraggingRef = useRef(false);
@@ -76,17 +75,18 @@ export function GanttChart({
   useEffect(() => {
     if (ganttInitialized.current || !containerRef.current) return;
 
-    // Closure-scoped list of DHTMLX event handler IDs so we can
-    // deterministically detach every one of them on cleanup.
+    // Closure-scoped list of DHTMLX event IDs — detached on cleanup.
     let attachedEventIds: string[] = [];
     let isMounted = true;
+    // Closure-scoped: captures the parent gantt-id before a move so
+    // onAfterTaskMove can update sort_order of the OLD parent too.
+    let previousParentId: string | null = null;
 
     const init = async () => {
       const ganttModule = await import('dhtmlx-gantt');
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const gantt: any = ganttModule.gantt || ganttModule.default || ganttModule;
 
-      // If component unmounted while we were importing, abort.
       if (!isMounted) return;
 
       gantt.plugins({ marker: true });
@@ -99,9 +99,9 @@ export function GanttChart({
       gantt.config.date_format = '%Y-%m-%d';
       gantt.config.min_column_width = 40;
       gantt.config.scale_height = 60;
-      gantt.config.row_height = 32; 
-      gantt.config.task_height = 18; 
-      gantt.config.readonly = readonly; 
+      gantt.config.row_height = 32;
+      gantt.config.task_height = 18;
+      gantt.config.readonly = readonly;
       gantt.config.details_on_dblclick = false;
       gantt.config.details_on_create = false;
       gantt.config.open_tree_initially = true;
@@ -134,16 +134,12 @@ export function GanttChart({
 
       gantt.init(containerRef.current);
       ganttRef.current = gantt;
-      // Attach to window so the public export API (api.js) can use it
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (window as any).gantt = gantt;
 
       // ────────────────────────────────────────────────────────
       // EVENT HANDLERS
-      // Each attachEvent() returns a unique string ID. We store
-      // every one so the cleanup function can detach them all,
-      // preventing the "double listener" bug caused by React
-      // Strict Mode or component re-mounts.
+      // Every attachEvent() ID is stored for deterministic cleanup.
       // ────────────────────────────────────────────────────────
 
       // ── Task Clicks ─────────────────────────────────────────
@@ -200,7 +196,9 @@ export function GanttChart({
           }
 
           if (!task.$editing && !readonly && target.closest('.gantt-clickable-text')) {
-            gantt.eachTask((t: GanttTaskEntity) => { if (t.$editing) { t.$editing = false; gantt.refreshTask(t.id); } });
+            gantt.eachTask((t: GanttTaskEntity) => {
+              if (t.$editing) { t.$editing = false; gantt.refreshTask(t.id); }
+            });
             task.$editing = true;
             gantt.refreshTask(id);
             setTimeout(() => {
@@ -213,9 +211,9 @@ export function GanttChart({
         })
       );
 
-      // ── Drag Lifecycle ───────────────────────────────────────
-      // onBeforeTaskDrag: set flag so onAfterTaskUpdate knows a drag
-      // is in progress and skips its name-only write.
+      // ── Drag Start ──────────────────────────────────────────
+      // Sets isDraggingRef so onAfterTaskUpdate skips writing dates
+      // (dates are written by the dedicated onAfterTaskDrag handler).
       attachedEventIds.push(
         gantt.attachEvent("onBeforeTaskDrag", () => {
           isDraggingRef.current = true;
@@ -223,60 +221,8 @@ export function GanttChart({
         })
       );
 
-      // Drag Validation (hierarchy rules)
-      attachedEventIds.push(
-        gantt.attachEvent("onBeforeTaskMove", (id: string, parent: string) => {
-          const task = gantt.getTask(id) as GanttTaskEntity;
-          const parentTask = parent && gantt.isTaskExists(parent) ? gantt.getTask(parent) as GanttTaskEntity : null;
-          if (task.db_type === 'partida' && parent) return false;
-          if (task.db_type === 'item' && (!parentTask || parentTask.db_type !== 'partida')) return false;
-          if (task.db_type === 'activity' && (!parentTask || parentTask.db_type !== 'item')) return false;
-          return true;
-        })
-      );
-
-      // ── Create ──────────────────────────────────────────────
-      // GUARD: skip when we're bulk-parsing data from the server
-      attachedEventIds.push(
-        gantt.attachEvent("onAfterTaskAdd", async (id: string, task: GanttTaskEntity) => {
-          if (isParsingRef.current) return;
-
-          const parentTask = task.parent && gantt.isTaskExists(String(task.parent)) ? gantt.getTask(String(task.parent)) as GanttTaskEntity : null;
-          const siblingsCount = gantt.getChildren(String(task.parent) || '').length;
-
-          let type = 'partida' as GanttDbType;
-          if (!parentTask) type = 'partida';
-          else if (parentTask.db_type === 'partida') type = 'item';
-          else type = 'activity';
-
-          task.db_type = type;
-
-          const result = await createTask(type, projectId, String(task.parent), task, siblingsCount);
-          if (result.success && result.data) {
-            const row = result.data as { id: string };
-            task.db_id = row.id;
-            const prefix = type === 'partida' ? 'p' : type === 'item' ? 'i' : 'a';
-            gantt.changeTaskId(id, `${prefix}_${row.id}`);
-          }
-        })
-      );
-
-      // ── Update (Name only) ───────────────────────────────────
-      // Only saves name changes (from inline editing).
-      // Date changes during drags are handled by onAfterTaskDrag below.
-      // GUARD: skip during bulk parse OR during a drag (drag has its
-      // own handler and also triggers onAfterTaskUpdate internally).
-      attachedEventIds.push(
-        gantt.attachEvent("onAfterTaskUpdate", async (id: string, task: GanttTaskEntity) => {
-          if (isParsingRef.current || isDraggingRef.current) return;
-          if (!task.db_id || !task.db_type) return;
-          await updateTask(task.db_type, task.db_id, { name: task.text });
-        })
-      );
-
-      // ── Update (Dates) ───────────────────────────────────────
-      // Fires ONCE after a complete drag-resize or drag-move on the
-      // timeline. Clears isDraggingRef and persists the new dates.
+      // ── Drag End (Dates) ────────────────────────────────────
+      // Fires ONCE when a resize/move drag completes. Persists dates.
       attachedEventIds.push(
         gantt.attachEvent("onAfterTaskDrag", async (id: string) => {
           isDraggingRef.current = false;
@@ -293,8 +239,43 @@ export function GanttChart({
         })
       );
 
+      // ── Create ──────────────────────────────────────────────
+      // GUARD: skip during bulk parse (isParsingRef)
+      attachedEventIds.push(
+        gantt.attachEvent("onAfterTaskAdd", async (id: string, task: GanttTaskEntity) => {
+          if (isParsingRef.current) return;
+          const parentTask = task.parent && gantt.isTaskExists(String(task.parent))
+            ? gantt.getTask(String(task.parent)) as GanttTaskEntity
+            : null;
+          const siblingsCount = gantt.getChildren(String(task.parent) || '').length;
+          let type = 'partida' as GanttDbType;
+          if (!parentTask) type = 'partida';
+          else if (parentTask.db_type === 'partida') type = 'item';
+          else type = 'activity';
+          task.db_type = type;
+          const result = await createTask(type, projectId, String(task.parent), task, siblingsCount);
+          if (result.success && result.data) {
+            const row = result.data as { id: string };
+            task.db_id = row.id;
+            const prefix = type === 'partida' ? 'p' : type === 'item' ? 'i' : 'a';
+            gantt.changeTaskId(id, `${prefix}_${row.id}`);
+          }
+        })
+      );
+
+      // ── Update (Name only) ──────────────────────────────────
+      // Fires on inline text edits. Skipped during drag (isDraggingRef)
+      // and bulk parse (isParsingRef). Dates are handled by onAfterTaskDrag.
+      attachedEventIds.push(
+        gantt.attachEvent("onAfterTaskUpdate", async (id: string, task: GanttTaskEntity) => {
+          if (isParsingRef.current || isDraggingRef.current) return;
+          if (!task.db_id || !task.db_type) return;
+          await updateTask(task.db_type, task.db_id, { name: task.text });
+        })
+      );
+
       // ── Delete ──────────────────────────────────────────────
-      // GUARD: skip when we're bulk-parsing data from the server
+      // GUARD: skip during bulk parse
       attachedEventIds.push(
         gantt.attachEvent("onAfterTaskDelete", async (id: string, task: GanttTaskEntity) => {
           if (isParsingRef.current) return;
@@ -304,14 +285,63 @@ export function GanttChart({
         })
       );
 
-      // ── Reorder ─────────────────────────────────────────────
+      // ── Reorder / Re-parent ─────────────────────────────────
+      // onBeforeTaskMove: records the previous parent AND enforces
+      // hierarchy rules (partidas can't be children, activities must
+      // live inside items, items inside partidas).
+      // The previousParentId closure variable is read by onAfterTaskMove.
       attachedEventIds.push(
-        gantt.attachEvent("onAfterTaskMove", async (id: string, parent: string) => {
+        gantt.attachEvent("onBeforeTaskMove", (id: string, parent: string) => {
+          const task = gantt.getTask(id) as GanttTaskEntity;
+          // Capture the current parent BEFORE the move changes it
+          previousParentId = String(task.parent ?? '');
+          // Enforce hierarchy rules
+          const parentTask = parent && gantt.isTaskExists(parent)
+            ? gantt.getTask(parent) as GanttTaskEntity
+            : null;
+          if (task.db_type === 'partida' && parent) return false;
+          if (task.db_type === 'item' && (!parentTask || parentTask.db_type !== 'partida')) return false;
+          if (task.db_type === 'activity' && (!parentTask || parentTask.db_type !== 'item')) return false;
+          return true;
+        })
+      );
+
+      // onAfterTaskMove: persists parent_id when it changes AND
+      // updates sort_order for both old and new parent's children.
+      attachedEventIds.push(
+        gantt.attachEvent("onAfterTaskMove", async (id: string, newParentGanttId: string) => {
           if (isParsingRef.current) return;
-          const task = gantt.getTask(id);
-          const siblings = gantt.getChildren(parent);
-          const childIds = siblings.map((sid: string) => gantt.getTask(sid).db_id).filter(Boolean);
-          await reorderSiblings(task.db_type, childIds);
+          const task = gantt.getTask(id) as GanttTaskEntity;
+          if (!task.db_id || !task.db_type) return;
+
+          const newParentTask = newParentGanttId && gantt.isTaskExists(newParentGanttId)
+            ? gantt.getTask(newParentGanttId) as GanttTaskEntity
+            : null;
+          const newParentDbId = newParentTask?.db_id ?? null;
+          const parentChanged = previousParentId !== newParentGanttId;
+
+          // 1. Persist the new parent_id in Firestore (only when it changed)
+          if (parentChanged && newParentDbId) {
+            await updateTask(task.db_type, task.db_id, { parent_id: newParentDbId });
+          }
+
+          // 2. Update sort_order for the new parent's children
+          const newSiblings = gantt.getChildren(newParentGanttId);
+          const newChildDbIds = newSiblings
+            .map((sid: string) => (gantt.getTask(sid) as GanttTaskEntity).db_id)
+            .filter(Boolean);
+          await reorderSiblings(task.db_type, newChildDbIds);
+
+          // 3. Update sort_order for the OLD parent's remaining children
+          if (parentChanged && previousParentId && gantt.isTaskExists(previousParentId)) {
+            const oldSiblings = gantt.getChildren(previousParentId);
+            const oldChildDbIds = oldSiblings
+              .map((sid: string) => (gantt.getTask(sid) as GanttTaskEntity).db_id)
+              .filter(Boolean);
+            await reorderSiblings(task.db_type, oldChildDbIds);
+          }
+
+          previousParentId = null;
         })
       );
 
@@ -324,28 +354,23 @@ export function GanttChart({
         })
       );
 
-      // ── Load initial data inside init to avoid race condition ─
+      // ── Load initial data ────────────────────────────────────
       gantt.ext.zoom.setLevel(zoomLevel);
-
       isParsingRef.current = true;
       gantt.parse({ data: tasksDataRef.current, links: [] });
       isParsingRef.current = false;
-
       await syncMarkers(gantt, projectId);
       gantt.render();
 
-      // Mark as initialized AFTER data is loaded
       ganttInitialized.current = true;
-
-      // Show today's date initially
-      setTimeout(() => { if (ganttRef.current) ganttRef.current.showDate(new Date()) }, 100);
+      setTimeout(() => { if (ganttRef.current) ganttRef.current.showDate(new Date()); }, 100);
     };
 
     init();
 
-    // ── Cleanup on unmount ──────────────────────────────────
+    // ── Cleanup on unmount ──────────────────────────────────────
     // Detach every DHTMLX event to prevent duplicate listeners
-    // when the component re-mounts (navigation, React Strict Mode).
+    // when the component re-mounts (React Strict Mode / navigation).
     return () => {
       isMounted = false;
       if (ganttRef.current) {
@@ -357,9 +382,9 @@ export function GanttChart({
       ganttInitialized.current = false;
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Only run once on mount
+  }, []);
 
-  // Handle Zoom and Readonly changes
+  // ── Zoom / Readonly ─────────────────────────────────────────
   useEffect(() => {
     if (ganttInitialized.current && ganttRef.current) {
       ganttRef.current.config.readonly = readonly;
@@ -369,39 +394,28 @@ export function GanttChart({
     }
   }, [readonly, zoomLevel, ganttRef]);
 
-  // ──────────────────────────────────────────────────────────────
-  // Handle Data Parsing (preserves open state) — subsequent updates
-  // The isParsing guard prevents onAfterTaskAdd/Update/Delete from
-  // firing during clearAll+parse, which was the root cause of both
-  // the "duplicate activity" and "phantom delete" bugs.
-  // ──────────────────────────────────────────────────────────────
+  // ── Data Refresh ────────────────────────────────────────────
+  // CRITICAL: isParsingRef guard prevents onAfterTaskAdd/Update/Delete
+  // from firing during clearAll+parse, which was the "duplicate" bug.
   useEffect(() => {
     if (ganttInitialized.current && ganttRef.current) {
       const gantt = ganttRef.current;
-      
+
       // Save open/collapsed state
       const openTasks = new Set<string>();
-      gantt.eachTask((t: GanttTaskEntity) => { if(t.$open) openTasks.add(t.id); });
-      
-      // ── CRITICAL: activate guard before bulk operations ────
-      isParsingRef.current = true;
+      gantt.eachTask((t: GanttTaskEntity) => { if (t.$open) openTasks.add(t.id); });
 
+      isParsingRef.current = true;
       gantt.clearAll();
       gantt.parse({ data: tasksData, links: [] });
-
-      // ── Deactivate guard ──────────────────────────────────
       isParsingRef.current = false;
-      
+
       // Restore open/collapsed state
       openTasks.forEach((id) => {
-        if (gantt.isTaskExists(id)) {
-          gantt.open(id);
-        }
+        if (gantt.isTaskExists(id)) gantt.open(id);
       });
 
-      syncMarkers(gantt, projectId).then(() => {
-        gantt.render();
-      });
+      syncMarkers(gantt, projectId).then(() => gantt.render());
     }
   }, [tasksData, projectId, syncMarkers, ganttRef]);
 
