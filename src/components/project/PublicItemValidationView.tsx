@@ -1,15 +1,16 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
-import { PartidaWithItems, DailyProgress } from '@/lib/types';
+import React, { useMemo, useState, useEffect } from 'react';
+import { PartidaWithItems, DailyProgress, Project } from '@/lib/types';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 
 interface Props {
+  project?: Project;
   partidas: PartidaWithItems[];
   dailyProgress: DailyProgress[];
 }
 
-export function PublicItemValidationView({ partidas, dailyProgress }: Props) {
+export function PublicItemValidationView({ project, partidas, dailyProgress }: Props) {
   // Create a map of accumulated progress per activity
   const accumulatedProgress = useMemo(() => {
     const map: Record<string, number> = {};
@@ -22,198 +23,75 @@ export function PublicItemValidationView({ partidas, dailyProgress }: Props) {
     return map;
   }, [dailyProgress]);
 
-  // Transform to Services > Items > Activities
+  // Transform dynamic services
   const services = useMemo(() => {
+    if (!project?.services || project.services.length === 0) {
+      return [];
+    }
+
     // 1. Deep clone
     const newPartidas: PartidaWithItems[] = JSON.parse(JSON.stringify(partidas));
 
-    // 2. Define moves (extracting activities to become items as per quote)
-    const moves = [
-      { name: 'Bandas de casco: Desmontaje de banda de casco Backup, Inst. de tapa metálica en el chute', toPartida: 'BANDA DE CASCOS', toItem: 'Bandas de casco' },
-      { name: 'Bandas de casco: Traslado y acopio de piezas desmontadas de BC Backup', toPartida: 'BANDA DE CASCOS', toItem: 'Bandas de casco' },
-      { name: 'Archa B1: Inst. Bandejas electricas nuevas - Pt. 01', toPartida: 'REUBICACIÓN ARCHA B1', toItem: 'Archa B1 (D4): Suministro de bandeja' },
-      { name: 'Archa B1: Inst. de cables de acometida y tierra', toPartida: 'REUBICACIÓN ARCHA B1', toItem: 'Archa B1 (D4): Suministro de acometidas y tierras' },
-      { name: 'Archa B1: Inst. Bandejas electricas nuevas - Pt. 02', toPartida: 'REUBICACIÓN ARCHA B1', toItem: 'Archa B1 (D4): Suministro de bandeja' },
-      { name: 'Archa D3: Inst. Bandejas electricas nuevas.', toPartida: 'REUBICACIÓN ARCHA D3', toItem: 'Archa D3: Suministro de bandeja' },
-      { name: 'Tin Hood D4: Fabricar Ducto Inox. y soportes', toPartida: 'REUBICACIÓN TIN HOOD B1', toItem: 'Tin Hood B1 a D4: Mecánico' },
-    ];
-
+    // 2. Iterate through dynamic services configured in admin
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const extractedActivities: { act: any, toPartida: string, toItem: string }[] = [];
-
-    for (const p of newPartidas) {
-      if (!p.items) continue;
-      for (const i of p.items) {
-        if (!i.activities) continue;
+    const dynamicServices: any[] = project.services
+      .sort((a, b) => a.sort_order - b.sort_order)
+      .map(serviceConfig => {
+        const servicePartidas = newPartidas.filter(p => serviceConfig.partida_ids.includes(p.id));
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const remainingActivities: any[] = [];
-        for (const act of i.activities) {
-          const move = moves.find(m => act.name.includes(m.name) || m.name.includes(act.name));
-          if (move) {
-            extractedActivities.push({ act, toPartida: move.toPartida, toItem: move.toItem });
-          } else {
-            remainingActivities.push(act);
+        const serviceItems: any[] = [];
+
+        for (const p of servicePartidas) {
+          if (!p.items) continue;
+          
+          for (const i of p.items) {
+            // Option A: Only show items that actually exist and have activities
+            if (!i.activities || i.activities.length === 0) continue;
+
+            // Calculate Item accumulated progress based on activities
+            let totalWeight = 0;
+            let weightedProgress = 0;
+
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            i.activities.forEach((act: any) => {
+              const actAcc = Math.min(accumulatedProgress[act.id] || 0, 100);
+              const w = act.weight || 1;
+              totalWeight += w;
+              weightedProgress += (actAcc * w);
+            });
+            const itemAcc = totalWeight > 0 ? (weightedProgress / totalWeight) : 0;
+
+            const itemName = (i.name === 'Ítem por Defecto') ? p.name : i.name;
+
+            serviceItems.push({
+              ...i,
+              displayName: itemName,
+              accumulatedPercent: itemAcc
+            });
           }
         }
-        i.activities = remainingActivities;
-      }
-    }
 
-    for (const ext of extractedActivities) {
-      let destPartida = newPartidas.find(p => p.name === ext.toPartida);
-      if (!destPartida) {
-        destPartida = {
-          id: `virtual-partida-${ext.toPartida.replace(/\s+/g, '-')}`,
-          project_id: newPartidas[0]?.project_id || '',
-          name: ext.toPartida,
-          sort_order: 999,
-          created_at: new Date().toISOString(),
-          items: []
-        };
-        newPartidas.push(destPartida);
-      }
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let destItem = destPartida.items.find((i: any) => i.name === ext.toItem);
-      if (!destItem) {
-        destItem = {
-          id: `virtual-item-${ext.toItem.replace(/\s+/g, '-')}`,
-          partida_id: destPartida.id,
-          name: ext.toItem,
-          sort_order: 999,
-          created_at: new Date().toISOString(),
-          activities: []
-        };
-        destPartida.items.push(destItem);
-      }
-      destItem.activities.push(ext.act);
-    }
-
-    const finalPartidas = newPartidas.map(p => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      p.items = p.items.filter((i: any) => i.activities && i.activities.length > 0);
-      return p;
-    }).filter(p => p.items && p.items.length > 0);
-
-    // 3. Group into Services
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const serviceBanda: any = { name: 'BANDA DE CASCOS', items: [] };
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const serviceInterferencias: any = { name: 'MOVIMIENTO DE INTERFERENCIAS', items: [] };
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const serviceArchas: any = { name: 'MOVIMIENTO DE ARCHAS OWENS', items: [] };
-
-    for (const p of finalPartidas) {
-      const isBanda = p.name === 'BANDA DE CASCOS';
-      for (const i of p.items) {
-        // Calculate Item accumulated progress based on activities
-        let totalWeight = 0;
-        let weightedProgress = 0;
-
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        i.activities.forEach((act: any) => {
-          const actAcc = Math.min(accumulatedProgress[act.id] || 0, 100);
-          const w = act.weight || 1;
-          totalWeight += w;
-          weightedProgress += (actAcc * w);
-        });
-        const itemAcc = totalWeight > 0 ? (weightedProgress / totalWeight) : 0;
-
-        // Mapeo exacto de nombres según la cotización
-        const itemNameMap: Record<string, string> = {
-          'Archa B1: Mecánico': 'Archa B1 (D4): Mecánico',
-          'Archa B1: Eléctrico': 'Archa B1 (D4): Eléctrico',
-          'Tin Hood B1: Mecánico': 'Tin Hood B1 a D4: Mecánico',
-          'REUBICACIÓN DFE B1': 'DFE B1 a D4: Mecánico', // Mapeo inferido de la imagen
-        };
-
-        let itemName = (i.name === 'Ítem por Defecto') ? p.name : i.name;
-        if (itemNameMap[itemName]) {
-          itemName = itemNameMap[itemName];
-        }
-
-        const processedItem = {
-          ...i,
-          displayName: itemName,
-          accumulatedPercent: itemAcc
-        };
-
-        if (isBanda) {
-          serviceBanda.items.push(processedItem);
-        } else if (itemName === 'MOVIMIENTO DE INTERFERENCIAS') {
-          serviceInterferencias.items.push(processedItem);
-        } else {
-          serviceArchas.items.push(processedItem);
-        }
-      }
-    }
-
-    // 4. Forzar los 19 ítems exactos de la cotización para "MOVIMIENTO DE ARCHAS OWENS"
-    const archaQuoteItems = [
-      'Archa B1 (D4): Mecánico',
-      'Archa B1 (D4): Eléctrico',
-      'Archa B1 (D4): Desinstalación, suministro e nuevo instalación de platinas',
-      'Archa B1 (D4): Suministro de bandeja',
-      'Archa B1 (D4): Suministro de acometidas y tierras',
-      'Archa D3: Mecánico',
-      'Archa D3: Eléctrico',
-      'Archa D3: Suministro de bandeja',
-      'Tin Hood B1 a D4: Mecánico',
-      'Tin Hood B1 a D4: Eléctrico',
-      'DFE B1 a D4: Mecánico',
-      'DFE B1 a D4: Eléctrico',
-      'DFE D3: Mecánico',
-      'DFE D3: Eléctrico',
-      'Relocalización CFU y conexiones: Mecánico',
-      'Relocalización CFU y conexiones: Eléctrico',
-      'Relocalización CFU y conexiones: Suministro de bandeja',
-      'Relocalización CFU y conexiones: Suministro de acometidas y tierras',
-      'Acompañamiento al comsionamiento y puesta en marcha'
-    ];
-
-    const finalArchasItems = archaQuoteItems.map(quoteName => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const existing = serviceArchas.items.filter((i: any) => i.displayName === quoteName);
-      if (existing.length > 0) {
-        // Fusionar si hay varios ítems que terminaron con el mismo nombre mapeado
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const mergedActivities = existing.flatMap((e: any) => e.activities);
-        let tW = 0; let wP = 0;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        mergedActivities.forEach((act: any) => {
-          const actAcc = Math.min(accumulatedProgress[act.id] || 0, 100);
-          const w = act.weight || 1;
-          tW += w; wP += (actAcc * w);
-        });
         return {
-          id: existing[0].id,
-          displayName: quoteName,
-          activities: mergedActivities,
-          accumulatedPercent: tW > 0 ? (wP / tW) : 0
+          name: serviceConfig.name,
+          items: serviceItems.sort((a, b) => a.sort_order - b.sort_order)
         };
-      } else {
-        return {
-          id: `virtual-empty-${quoteName.replace(/\s+/g, '-')}`,
-          displayName: quoteName,
-          activities: [],
-          accumulatedPercent: 0
-        };
-      }
-    });
+      });
 
-    // Añadir ítems "huérfanos" (que no están en los 19) al final por si acaso
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const lostItems = serviceArchas.items.filter((i: any) => !archaQuoteItems.includes(i.displayName));
-    serviceArchas.items = [...finalArchasItems, ...lostItems];
-
-    return [serviceBanda, serviceArchas, serviceInterferencias].filter(s => s.items.length > 0 || s.name === 'MOVIMIENTO DE ARCHAS OWENS');
-  }, [partidas, accumulatedProgress]);
+    return dynamicServices.filter(s => s.items.length > 0);
+  }, [partidas, accumulatedProgress, project]);
 
   // State to manage which Services are open in the accordion
-  const [openServices, setOpenServices] = useState<Record<string, boolean>>({
-    'BANDA DE CASCOS': true,
-    'MOVIMIENTO DE ARCHAS OWENS': true,
-    'MOVIMIENTO DE INTERFERENCIAS': true
-  });
+  const [openServices, setOpenServices] = useState<Record<string, boolean>>({});
+
+  // Initialize all services as open
+  useEffect(() => {
+    if (services.length > 0 && Object.keys(openServices).length === 0) {
+      const initial: Record<string, boolean> = {};
+      services.forEach(s => initial[s.name] = true);
+      setOpenServices(initial);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [services]);
 
   // Items are closed by default to keep the UI clean
   const [openItems, setOpenItems] = useState<Record<string, boolean>>({});
@@ -225,6 +103,25 @@ export function PublicItemValidationView({ partidas, dailyProgress }: Props) {
   const toggleItem = (id: string) => {
     setOpenItems(prev => ({ ...prev, [id]: !prev[id] }));
   };
+
+  if (!project?.services || project.services.length === 0) {
+    return (
+      <ErrorBoundary>
+        <div className="bg-white p-8 rounded-2xl shadow-sm border border-surface-700 text-center fade-in">
+          <div className="w-16 h-16 bg-surface-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <svg className="w-8 h-8 text-surface-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+            </svg>
+          </div>
+          <h3 className="text-xl font-bold text-surface-100 mb-2">Servicios no configurados</h3>
+          <p className="text-surface-400 max-w-md mx-auto">
+            El administrador del proyecto aún no ha agrupado las partidas en servicios. 
+            Esta vista estará disponible una vez que se configuren desde el panel de control.
+          </p>
+        </div>
+      </ErrorBoundary>
+    );
+  }
 
   return (
     <ErrorBoundary>
@@ -258,6 +155,7 @@ export function PublicItemValidationView({ partidas, dailyProgress }: Props) {
                 {/* Items List */}
                 <div className={`transition-all duration-300 ease-in-out overflow-hidden ${openServices[service.name] ? 'max-h-[5000px] opacity-100' : 'max-h-0 opacity-0'}`}>
                   <div className="divide-y divide-surface-700/30 p-2 md:p-4 space-y-4">
+                    {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                     {service.items.map((item: any) => (
                       <div key={item.id} className="bg-surface-50 rounded-xl border border-surface-700/40 overflow-hidden shadow-sm transition-all">
                         {/* Item Header as Accordion Button */}
@@ -297,6 +195,7 @@ export function PublicItemValidationView({ partidas, dailyProgress }: Props) {
                         {/* Activities Accordion Content */}
                         <div className={`transition-all duration-300 ease-in-out overflow-hidden ${openItems[item.id] ? 'max-h-[2000px] opacity-100' : 'max-h-0 opacity-0'}`}>
                           <div className="p-3 md:p-4 space-y-2">
+                            {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                             {item.activities.map((act: any) => {
                               const acc = Math.min(accumulatedProgress[act.id] || 0, 100);
                               return (
@@ -327,7 +226,7 @@ export function PublicItemValidationView({ partidas, dailyProgress }: Props) {
                     ))}
                     
                     {service.items.length === 0 && (
-                      <p className="text-sm text-surface-300 italic p-4">No hay ítems en este servicio.</p>
+                      <p className="text-sm text-surface-300 italic p-4">Este servicio contiene partidas, pero no tienen actividades registradas.</p>
                     )}
                   </div>
                 </div>
@@ -336,7 +235,7 @@ export function PublicItemValidationView({ partidas, dailyProgress }: Props) {
             
             {services.length === 0 && (
                <div className="text-center py-10 text-surface-300 bg-surface-50 rounded-xl border border-surface-700/50">
-                 No hay datos de servicios para mostrar en este proyecto.
+                 Las partidas asignadas a los servicios no contienen actividades.
                </div>
             )}
           </div>

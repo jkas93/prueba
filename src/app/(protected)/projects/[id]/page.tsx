@@ -167,7 +167,7 @@ export default async function ProjectPage({ params }: Props) {
           </div>
 
           <div className="flex-shrink-0 pt-0.5">
-            <ProjectActionsMenu project={project} isOwner={isOwner} />
+            <ProjectActionsMenu project={project} partidas={partidas} isOwner={isOwner} />
           </div>
         </div>
 

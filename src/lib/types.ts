@@ -12,6 +12,14 @@ export interface Profile {
   created_at: string;
 }
 
+export interface ProjectService {
+  id: string;
+  project_id: string;
+  name: string;
+  partida_ids: string[];
+  sort_order: number;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -22,6 +30,7 @@ export interface Project {
   share_token?: string | null;
   created_at?: string;
   updated_at?: string;
+  services?: ProjectService[];
 }
 
 export interface ProjectMember {

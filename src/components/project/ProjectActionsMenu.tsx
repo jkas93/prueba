@@ -5,14 +5,17 @@ import { DeleteProjectButton } from './DeleteProjectButton';
 import { ReportExportButton } from './ReportExportButton';
 import { TeamModal } from './TeamModal';
 import { ShareModal } from './ShareModal';
+import { ServicesModal } from './ServicesModal';
+import type { PartidaWithItems } from '@/lib/types';
 
 interface ProjectActionsMenuProps {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
   project: any;
+  partidas?: PartidaWithItems[];
   isOwner: boolean;
 }
 
-export function ProjectActionsMenu({ project, isOwner }: ProjectActionsMenuProps) {
+export function ProjectActionsMenu({ project, partidas = [], isOwner }: ProjectActionsMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -57,6 +60,12 @@ export function ProjectActionsMenu({ project, isOwner }: ProjectActionsMenuProps
               projectId={project.id} 
               initialToken={project.share_token} 
               projectName={project.name} 
+              variant="menuItem"
+            />
+            <ServicesModal
+              project={project}
+              partidas={partidas}
+              isOwner={isOwner}
               variant="menuItem"
             />
           </div>

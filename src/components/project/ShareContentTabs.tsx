@@ -124,6 +124,7 @@ export function ShareContentTabs({ project, partidas, dailyProgress, milestones 
         {activeTab === 'validation' && (
           <section className="animate-fade-in">
             <PublicItemValidationView
+              project={project}
               partidas={partidas || []}
               dailyProgress={dailyProgress}
             />
