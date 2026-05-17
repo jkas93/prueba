@@ -129,7 +129,7 @@ export function ServicesModal({ project, partidas, isOwner, variant = 'button' }
       {variant === 'menuItem' ? (
         <button
           onClick={() => setIsOpen(true)}
-          className="w-full text-left px-4 py-2 text-sm text-surface-200 hover:bg-surface-800 hover:text-white transition-colors flex items-center gap-2"
+          className="w-full text-left px-4 py-2 text-sm text-surface-200 hover:bg-surface-800 hover:text-surface-100 transition-colors flex items-center gap-2"
         >
           <svg className="w-4 h-4 text-surface-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
@@ -155,14 +155,14 @@ export function ServicesModal({ project, partidas, isOwner, variant = 'button' }
           <div className="relative bg-surface-900 border border-surface-700/50 rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden animate-fade-in-up">
             <div className="p-5 md:p-6 border-b border-surface-800 flex justify-between items-center bg-surface-900/50">
               <div>
-                <h2 className="text-xl font-bold text-surface-50">Configurar Servicios</h2>
+                <h2 className="text-xl font-bold text-surface-100">Configurar Servicios</h2>
                 <p className="text-sm text-surface-400 mt-1">
                   Agrupa partidas y ordena los ítems para la vista pública.
                 </p>
               </div>
               <button
                 onClick={() => !isSaving && setIsOpen(false)}
-                className="p-2 text-surface-400 hover:text-white bg-surface-800 hover:bg-surface-700 rounded-lg transition-all"
+                className="p-2 text-surface-400 hover:text-surface-100 bg-surface-800 hover:bg-surface-700 rounded-lg transition-all"
                 disabled={isSaving}
               >
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -181,14 +181,14 @@ export function ServicesModal({ project, partidas, isOwner, variant = 'button' }
                         <button
                           onClick={() => handleMoveService(index, 'up')}
                           disabled={index === 0}
-                          className="p-1 text-surface-400 hover:text-white disabled:opacity-30 disabled:hover:text-surface-400 transition-colors"
+                          className="p-1 text-surface-400 hover:text-surface-100 disabled:opacity-30 disabled:hover:text-surface-400 transition-colors"
                         >
                           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" /></svg>
                         </button>
                         <button
                           onClick={() => handleMoveService(index, 'down')}
                           disabled={index === services.length - 1}
-                          className="p-1 text-surface-400 hover:text-white disabled:opacity-30 disabled:hover:text-surface-400 transition-colors"
+                          className="p-1 text-surface-400 hover:text-surface-100 disabled:opacity-30 disabled:hover:text-surface-400 transition-colors"
                         >
                           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
                         </button>
@@ -198,7 +198,7 @@ export function ServicesModal({ project, partidas, isOwner, variant = 'button' }
                           type="text"
                           value={service.name}
                           onChange={(e) => handleUpdateServiceName(service.id, e.target.value)}
-                          className="w-full bg-surface-900 border border-surface-700 text-surface-50 text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500 transition-colors font-semibold"
+                          className="w-full bg-surface-900 border border-surface-700 text-surface-100 text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500 transition-colors font-semibold"
                           placeholder="Nombre del servicio"
                         />
                       </div>
@@ -218,7 +218,7 @@ export function ServicesModal({ project, partidas, isOwner, variant = 'button' }
                       <div>
                         <p className="text-xs font-semibold text-surface-400 uppercase tracking-wider mb-3">Partidas vinculadas</p>
                         {partidas.length === 0 ? (
-                          <p className="text-sm text-surface-500 italic">No hay partidas.</p>
+                          <p className="text-sm text-surface-1000 italic">No hay partidas.</p>
                         ) : (
                           <div className="space-y-2">
                             {partidas.map(partida => {
@@ -245,7 +245,7 @@ export function ServicesModal({ project, partidas, isOwner, variant = 'button' }
                       <div className="bg-surface-900/50 rounded-xl p-3 border border-surface-700/30">
                         <p className="text-xs font-semibold text-surface-400 uppercase tracking-wider mb-3">Orden de Ítems ({serviceItems.length})</p>
                         {serviceItems.length === 0 ? (
-                          <p className="text-xs text-surface-500 italic">Selecciona partidas para ver sus ítems aquí.</p>
+                          <p className="text-xs text-surface-1000 italic">Selecciona partidas para ver sus ítems aquí.</p>
                         ) : (
                           <div className="space-y-1.5 max-h-[300px] overflow-y-auto custom-scrollbar pr-1">
                             {serviceItems.map((item, itemIdx) => (
@@ -254,14 +254,14 @@ export function ServicesModal({ project, partidas, isOwner, variant = 'button' }
                                   <button
                                     onClick={() => handleMoveItem(service.id, item.id, 'up')}
                                     disabled={itemIdx === 0}
-                                    className="text-surface-500 hover:text-primary-400 disabled:opacity-20 disabled:hover:text-surface-500 transition-colors"
+                                    className="text-surface-1000 hover:text-primary-400 disabled:opacity-20 disabled:hover:text-surface-1000 transition-colors"
                                   >
                                     <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 15l7-7 7 7" /></svg>
                                   </button>
                                   <button
                                     onClick={() => handleMoveItem(service.id, item.id, 'down')}
                                     disabled={itemIdx === serviceItems.length - 1}
-                                    className="text-surface-500 hover:text-primary-400 disabled:opacity-20 disabled:hover:text-surface-500 transition-colors"
+                                    className="text-surface-1000 hover:text-primary-400 disabled:opacity-20 disabled:hover:text-surface-1000 transition-colors"
                                   >
                                     <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" /></svg>
                                   </button>
