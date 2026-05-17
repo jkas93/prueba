@@ -18,6 +18,7 @@ export interface ProjectService {
   name: string;
   partida_ids: string[];
   sort_order: number;
+  item_order?: string[];
 }
 
 export interface Project {

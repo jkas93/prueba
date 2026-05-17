@@ -73,7 +73,17 @@ export function PublicItemValidationView({ project, partidas, dailyProgress }: P
 
         return {
           name: serviceConfig.name,
-          items: serviceItems.sort((a, b) => a.sort_order - b.sort_order)
+          items: serviceItems.sort((a, b) => {
+            if (serviceConfig.item_order && serviceConfig.item_order.length > 0) {
+              const indexA = serviceConfig.item_order.indexOf(a.id);
+              const indexB = serviceConfig.item_order.indexOf(b.id);
+              if (indexA === -1 && indexB === -1) return a.sort_order - b.sort_order;
+              if (indexA === -1) return 1;
+              if (indexB === -1) return -1;
+              return indexA - indexB;
+            }
+            return a.sort_order - b.sort_order;
+          })
         };
       });
 
