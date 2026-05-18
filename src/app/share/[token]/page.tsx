@@ -129,8 +129,6 @@ export default async function SharePage({ params }: Props) {
     .get();
   const milestones = milestonesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
 
-  // Detect RLS Block issue: No longer applicable for Firebase Admin, but we can keep variable for logic
-  const isRLSBlocked = false;
 
   // Calculate SCurve Data for Executive Summary
   const flatActivities = (partidas || [])
@@ -166,20 +164,6 @@ export default async function SharePage({ params }: Props) {
   return (
     <main className="min-h-screen p-4 md:p-6 lg:p-8 bg-surface-50">
       <div className="max-w-[1600px] w-full mx-auto fade-in">
-
-        {isRLSBlocked && (
-          <div className="bg-red-500/10 border-l-4 border-red-500 text-red-700 p-4 mb-8 rounded-r-lg">
-            <h3 className="font-bold flex items-center gap-2">
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
-              Acceso a Lectura Bloqueado (Seguridad Supabase)
-            </h3>
-            <p className="mt-2 text-sm text-red-600/90">
-              La solicitud de este enlace externo al servidor fue rechazada. Supabase bloquea por defecto la lectura de tus tareas (0 partidas recibidas) mediante sus Políticas RLS para usuarios externos sin cuenta (Anonymous). <br /><br />
-              <strong>¡OBLIGATORIO PARA PRODUCCIÓN!</strong> <br />
-              Para solucionarlo: En el archivo del proyecto <strong><code>public_read_access_fix.sql</code></strong>, copia todo el SQL que he programado y córrelo en la pestaña &quot;SQL Editor&quot; de tu plataforma Supabase. Eso deseará acceso de lectura &quot;Reader&quot; a cualquier invitado válido que porte un Link seguro.
-            </p>
-          </div>
-        )}
 
         {/* Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-10 bg-white p-6 rounded-2xl shadow-sm border border-surface-700">

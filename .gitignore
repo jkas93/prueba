@@ -42,3 +42,9 @@ next-env.d.ts
 firebase-credentials.json
 migrate_to_firebase.js
 scripts/migrate-*.mts
+
+# Archivos sensibles de migración — NUNCA subir al repo
+source-key.json
+dest-key.json
+users.json
+*-key.json

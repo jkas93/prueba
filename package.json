@@ -10,11 +10,11 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "migrate:auth": "node scripts/migrate_auth_users.js"
+    "migrate:auth": "node scripts/migrate_auth_users.js",
+    "migrate:firestore": "npx tsx scripts/migrate-firestore.mts"
   },
   "dependencies": {
-    "@supabase/ssr": "^0.9.0",
-    "@supabase/supabase-js": "^2.99.2",
+
     "@tanstack/react-virtual": "^3.13.24",
     "date-fns": "^4.1.0",
     "dhtmlx-gantt": "^9.1.3",
