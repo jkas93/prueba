@@ -39,10 +39,15 @@ export default function RegisterPage() {
         created_at: new Date().toISOString()
       });
 
-      // 4. Autenticar en Next.js Edge (Crear Cookie)
-      const idToken = await user.getIdToken();
+      // 4. Crear sesión edge (cookie)
+      const idToken  = await user.getIdToken();
       const response = await fetch('/api/login', {
-        headers: { Authorization: `Bearer ${idToken}` },
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${idToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ idToken }),
       });
 
       if (response.ok) {

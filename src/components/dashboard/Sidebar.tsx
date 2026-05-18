@@ -144,28 +144,6 @@ export function Sidebar({ user, profile }: SidebarProps) {
         </div>
       </div>
 
-      <style dangerouslySetInnerHTML={{__html: `
-        .fade-in-fast {
-          animation: fade-in-fast 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-        }
-        @keyframes fade-in-fast {
-          0% { opacity: 0; transform: translateX(-4px); }
-          100% { opacity: 1; transform: translateX(0); }
-        }
-        .custom-scrollbar::-webkit-scrollbar {
-          width: 4px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-track {
-          background: transparent;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb {
-          background-color: rgba(255,255,255,0.1);
-          border-radius: 4px;
-        }
-        .box-shadow-glow {
-          box-shadow: 0 0 8px rgba(247, 194, 14, 0.6);
-        }
-      `}} />
     </aside>
   );
 }

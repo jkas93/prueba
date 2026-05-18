@@ -153,14 +153,35 @@ service cloud.firestore {
     }
 
 
-    // ── /admin_audit_log/{logId} ────────────────────────────
+    // ── /project_milestones/{milestoneId} ────────────────────────
+    match /project_milestones/{milestoneId} {
+      allow read: if isProjectMember(resource.data.project_id) || isSuperadmin();
+      allow create: if isAuthenticated() && (
+        isProjectOwner(request.resource.data.project_id) || isSuperadmin()
+      );
+      allow update: if isProjectOwner(request.resource.data.project_id) || isSuperadmin();
+      allow delete: if isProjectOwner(request.resource.data.project_id) || isSuperadmin();
+    }
+
+
+    // ── /project_member_roles/{roleId} ──────────────────────────
+    match /project_member_roles/{roleId} {
+      allow read: if isProjectMember(resource.data.project_id) || isSuperadmin();
+      allow create, update: if isAuthenticated() && (
+        isProjectOwner(request.resource.data.project_id) || isSuperadmin()
+      );
+      allow delete: if isProjectOwner(request.resource.data.project_id) || isSuperadmin();
+    }
+
+
+    // ── /admin_audit_log/{logId} ──────────────────────────────
     // Solo superadmins pueden leer/escribir el log de auditoría
     match /admin_audit_log/{logId} {
       allow read, write: if isSuperadmin();
     }
 
 
-    // ── Bloqueo por defecto ─────────────────────────────────
+    // ── Bloqueo por defecto ───────────────────────────────────
     // Cualquier colección no listada arriba queda denegada
     match /{document=**} {
       allow read, write: if false;

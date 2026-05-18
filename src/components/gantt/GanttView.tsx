@@ -51,6 +51,23 @@ export function GanttView({ projectId, partidas, dailyProgress = [], readonly = 
     progress: 0,
   });
 
+  const [confirmModal, setConfirmModal] = useState<{
+    open: boolean;
+    message: string;
+    onConfirm: () => void;
+  }>({ open: false, message: '', onConfirm: () => {} });
+
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3500);
+  };
+
+  const openConfirm = (message: string, onConfirm: () => void) => {
+    setConfirmModal({ open: true, message, onConfirm });
+  };
+
   useEffect(() => {
     async function checkOwner() {
       const user = auth.currentUser;
@@ -99,30 +116,33 @@ export function GanttView({ projectId, partidas, dailyProgress = [], readonly = 
     }
   };
 
-  const handleSetBaseline = async () => {
-    if (!window.confirm('¿Estás seguro de establecer las fechas actuales como Línea Base?\nEsto sobrescribirá cualquier línea base anterior y permitirá calcular la variación.')) return;
-    setIsSettingBaseline(true);
-    const res = await setProjectBaseline(projectId);
-    if (res.success) {
-      alert('Línea base guardada correctamente.');
-      router.refresh();
-    } else {
-      alert(res.error || 'Ocurrió un error al guardar la línea base.');
-    }
-    setIsSettingBaseline(false);
+  const handleSetBaseline = () => {
+    openConfirm(
+      '¿Estás seguro de establecer las fechas actuales como Línea Base?\nEsto sobrescribirá cualquier línea base anterior.',
+      async () => {
+        setIsSettingBaseline(true);
+        setConfirmModal((p) => ({ ...p, open: false }));
+        const res = await setProjectBaseline(projectId);
+        if (res.success) {
+          showToast('Línea base guardada correctamente.');
+          router.refresh();
+        } else {
+          showToast(res.error || 'Error al guardar la línea base.', 'error');
+        }
+        setIsSettingBaseline(false);
+      }
+    );
   };
 
   const handleExportMSProject = () => {
     if (ganttRef.current) {
-      // Export expects exportToMSProject method from export module (which is a global gantt plugin)
-      // Usually gantt.exportToMSProject exists if the export api is included
       if (typeof ganttRef.current.exportToMSProject === 'function') {
         ganttRef.current.exportToMSProject({
           name: `Cronograma_${projectId}.xml`,
           skip_circular_links: false
         });
       } else {
-        alert('El servicio de exportación a MS Project no está disponible o cargado.');
+        showToast('El servicio de exportación a MS Project no está disponible o cargado.', 'error');
       }
     }
   };
@@ -230,6 +250,51 @@ export function GanttView({ projectId, partidas, dailyProgress = [], readonly = 
         onSave={handleSidebarSave}
         readonly={readonly}
       />
+
+      {/* ── Confirm Modal ── */}
+      {confirmModal.open && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4" onClick={() => setConfirmModal(p => ({ ...p, open: false }))}>
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+          <div className="relative bg-white rounded-2xl shadow-2xl p-6 max-w-md w-full border border-surface-700/20 fade-in" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start gap-4 mb-6">
+              <div className="flex-shrink-0 w-10 h-10 rounded-full bg-warning-500/10 flex items-center justify-center">
+                <svg className="w-5 h-5 text-warning-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="font-bold text-surface-100 mb-1">Confirmar acción</h3>
+                <p className="text-sm text-surface-200/70 whitespace-pre-line">{confirmModal.message}</p>
+              </div>
+            </div>
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => setConfirmModal(p => ({ ...p, open: false }))} className="btn-secondary text-sm px-4 py-2">
+                Cancelar
+              </button>
+              <button onClick={confirmModal.onConfirm} className="btn-primary text-sm px-4 py-2">
+                Confirmar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Toast Notification ── */}
+      {toast && (
+        <div className={`fixed bottom-6 right-6 z-[300] flex items-center gap-3 px-5 py-3.5 rounded-xl shadow-xl border text-sm font-semibold fade-in ${
+          toast.type === 'success'
+            ? 'bg-white border-success-500/20 text-success-700'
+            : 'bg-white border-danger-500/20 text-danger-700'
+        }`}>
+          <svg className={`w-5 h-5 flex-shrink-0 ${toast.type === 'success' ? 'text-success-500' : 'text-danger-500'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            {toast.type === 'success'
+              ? <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              : <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m0 3.75h.008v.008H12v-.008zm9-3.75a9 9 0 11-18 0 9 9 0 0118 0z" />
+            }
+          </svg>
+          {toast.message}
+        </div>
+      )}
     </>
   );
 }

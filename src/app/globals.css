@@ -254,6 +254,21 @@ body {
   animation: fadeIn 0.4s ease-out;
 }
 
+/* Fast fade + slide-in for sidebar elements */
+.fade-in-fast {
+  animation: fade-in-fast 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes fade-in-fast {
+  0%   { opacity: 0; transform: translateX(-4px); }
+  100% { opacity: 1; transform: translateX(0); }
+}
+
+/* Gold glow box-shadow helper */
+.box-shadow-glow {
+  box-shadow: 0 0 8px rgba(247, 194, 14, 0.6);
+}
+
 @keyframes fadeIn {
   from {
     opacity: 0;
@@ -386,19 +401,19 @@ body {
 
 /* Estilo condensado para la cuadrícula (Izquierda) */
 .gantt-dark-theme-wrapper .gantt_tree_content,
-.gantt-dark-theme-wrapper .gantt_grid_head_cell { 
-  font-family: 'Inter', sans-serif !important;
+.gantt-dark-theme-wrapper .gantt_grid_head_cell {
+  font-family: var(--font-sans) !important;
   letter-spacing: -0.02em !important;
   font-size: 13px !important;
 }
 .gantt-dark-theme-wrapper .gantt_grid_head_cell { font-size: 11px !important; text-transform: uppercase; }
 
-.gantt-dark-theme-wrapper .gantt_task_content { 
-  font-size: 10px !important; 
-  font-weight: 600 !important; 
-  line-height: 18px !important; 
-  letter-spacing: -0.02em !important; 
-  font-family: 'Inter', sans-serif !important;
+.gantt-dark-theme-wrapper .gantt_task_content {
+  font-size: 10px !important;
+  font-weight: 600 !important;
+  line-height: 18px !important;
+  letter-spacing: -0.02em !important;
+  font-family: var(--font-sans) !important;
   color: #000B1C !important;
   display: flex !important;
   align-items: center !important;
@@ -422,11 +437,11 @@ body {
 .side-panel-exit { transform: translateX(0); }
 .side-panel-exit-active { transform: translateX(100%); }
 
-/* Unificación tipográfica en campos de edición */
-.inline-edit-input, 
-.side-panel-content input, 
+/* Tipografía unificada en campos de edición */
+.inline-edit-input,
+.side-panel-content input,
 .side-panel-content textarea {
-  font-family: 'Inter', sans-serif !important;
+  font-family: var(--font-sans) !important;
   letter-spacing: -0.02em !important;
 }
 

@@ -4,6 +4,7 @@ import { Sidebar } from '@/components/dashboard/Sidebar';
 import { adminDb } from '@/lib/firebase/server';
 import { getTokens } from 'next-firebase-auth-edge';
 import { cookies } from 'next/headers';
+import { FIREBASE_AUTH_CONFIG } from '@/lib/auth/config';
 import { LogoutButton } from '@/components/dashboard/LogoutButton';
 
 export default async function ProtectedLayout({
@@ -12,43 +13,23 @@ export default async function ProtectedLayout({
   children: React.ReactNode;
 }) {
   const cookieStore = await cookies();
-  const tokens = await getTokens(cookieStore, {
-    apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY!,
-    cookieName: 'AuthToken',
-    cookieSignatureKeys: process.env.COOKIE_SIGNATURE_KEYS
-      ? process.env.COOKIE_SIGNATURE_KEYS.split(',').map(k => k.trim())
-      : ['cronograma-secret-key-2026'],
-    serviceAccount: {
-      projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID!,
-      clientEmail: process.env.FIREBASE_ADMIN_CLIENT_EMAIL!,
-      privateKey: (process.env.FIREBASE_ADMIN_PRIVATE_KEY || '').replace(/\\n/g, "\n"),
-    }
-  });
+  const tokens      = await getTokens(cookieStore, FIREBASE_AUTH_CONFIG);
 
   if (!tokens) {
     redirect('/login');
   }
 
-  const user = tokens.decodedToken;
+  const user    = tokens.decodedToken;
 
-  // Get user profile
-  const userDoc = await adminDb.collection('users').doc(user.uid).get();
+  const userDoc    = await adminDb.collection('users').doc(user.uid).get();
   const profileData = userDoc.data();
-  const profile = profileData ? {
-    full_name: profileData.full_name as string,
-    avatar_url: profileData.avatar_url as string,
-    system_role: profileData.system_role as 'user' | 'superadmin' | undefined
-  } : null;
-
-  // Supabase User type shim for Sidebar
-  const userShim = {
-    id: user.uid,
-    email: user.email || '',
-    app_metadata: {},
-    user_metadata: {},
-    aud: 'authenticated',
-    created_at: new Date().toISOString()
-  };
+  const profile = profileData
+    ? {
+        full_name:   profileData.full_name   as string,
+        avatar_url:  profileData.avatar_url  as string,
+        system_role: profileData.system_role as 'user' | 'superadmin' | undefined,
+      }
+    : null;
 
   return (
     <div className="h-screen flex overflow-hidden pb-16 md:pb-0 landscape:pb-0">

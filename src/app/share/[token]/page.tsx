@@ -6,20 +6,9 @@ import { calculateSCurve } from '@/lib/scurve';
 import { es } from 'date-fns/locale';
 import type { Metadata } from 'next';
 import { adminDb } from '@/lib/firebase/server';
-import type { PartidaWithItems, DailyProgress } from '@/lib/types';
-
-type GanttElement = {
-  id: string;
-  type: 'partida' | 'item' | 'activity';
-  parent_id: string | null;
-  project_id: string;
-  name: string;
-  start_date?: string;
-  end_date?: string;
-  weight?: number;
-  sort_order?: number;
-  created_at?: string;
-};
+import type { DailyProgress } from '@/lib/types';
+import { buildPartidaTree, getEffectiveDates } from '@/lib/firebase/data-utils';
+import type { GanttElementRaw } from '@/lib/firebase/data-utils';
 
 export const revalidate = 60; // ISR cache por 60 segundos
 export const dynamicParams = true;
@@ -67,44 +56,17 @@ export default async function SharePage({ params }: Props) {
     .orderBy('sort_order')
     .get();
 
-  const elements = ganttSnap.docs.map(d => ({ id: d.id, ...d.data() } as GanttElement));
+  // ── Build tree + effective dates (shared utility) ────────────
+  const elements = ganttSnap.docs.map(d => ({ id: d.id, ...d.data() } as GanttElementRaw));
+  const partidas = buildPartidaTree(elements, project.id);
+  const { effectiveStart, effectiveEnd } = getEffectiveDates(
+    project.start_date,
+    project.end_date,
+    partidas
+  );
 
-  const partidasRaw = elements.filter((e) => e.type === 'partida');
-  const itemsRaw = elements.filter((e) => e.type === 'item');
-  const activitiesRaw = elements.filter((e) => e.type === 'activity');
-
-  const partidas: PartidaWithItems[] = partidasRaw.map((p) => ({
-    id: p.id,
-    project_id: project.id,
-    name: p.name,
-    sort_order: p.sort_order ?? 0,
-    created_at: '',
-    items: itemsRaw
-      .filter((i) => i.parent_id === p.id)
-      .map((i) => ({
-        id: i.id,
-        partida_id: p.id,
-        name: i.name,
-        sort_order: i.sort_order ?? 0,
-        created_at: '',
-        activities: activitiesRaw
-          .filter((a) => a.parent_id === i.id)
-          .map((a) => ({
-            id: a.id,
-            item_id: i.id,
-            name: a.name,
-            start_date: a.start_date ?? '',
-            end_date: a.end_date ?? '',
-            weight: a.weight ?? 1,
-            sort_order: a.sort_order ?? 0,
-            created_at: '',
-            updated_at: '',
-          })),
-      })),
-  }));
-
-  // Fetch daily progress
-  const activityIds = activitiesRaw.map((a) => a.id);
+  // ── Daily progress (chunked) ─────────────────────────────────
+  const activityIds = elements.filter(e => e.type === 'activity').map(e => e.id);
   let dailyProgress: DailyProgress[] = [];
 
   if (activityIds.length > 0) {
@@ -122,35 +84,16 @@ export default async function SharePage({ params }: Props) {
     );
   }
 
-  // Fetch milestones
-  const milestonesSnap = await adminDb.collection('project_milestones')
+  // ── Milestones ───────────────────────────────────────────────
+  const milestonesSnap = await adminDb
+    .collection('project_milestones')
     .where('project_id', '==', project.id)
     .orderBy('date')
     .get();
   const milestones = milestonesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
 
-
-  // Calculate SCurve Data for Executive Summary
-  const flatActivities = (partidas || [])
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .flatMap((p: any) => p.items || [])
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .flatMap((i: any) => i.activities || []);
-
-  let effectiveStart = project.start_date;
-  let effectiveEnd = project.end_date;
-  if (flatActivities.length > 0) {
-    const actStarts = flatActivities.map(a => a.start_date).filter(Boolean);
-    const actEnds = flatActivities.map(a => a.end_date).filter(Boolean);
-    if (actStarts.length > 0) {
-      const minStart = actStarts.sort()[0];
-      if (minStart < effectiveStart) effectiveStart = minStart;
-    }
-    if (actEnds.length > 0) {
-      const maxEnd = actEnds.sort().reverse()[0];
-      if (maxEnd > effectiveEnd) effectiveEnd = maxEnd;
-    }
-  }
+  // ── S-Curve calculation ──────────────────────────────────────
+  const flatActivities = partidas.flatMap(p => p.items).flatMap(i => i.activities);
 
   const effectiveProject = { ...project, start_date: effectiveStart, end_date: effectiveEnd };
 

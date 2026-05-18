@@ -14,19 +14,19 @@ type UserRecord = {
   projects: { name: string; role: string }[];
 };
 
-// ─── Helper para enviar email de reset usando Firebase REST API ───
+// ── Firebase email reset via REST API ──────────────────────────
 async function sendFirebaseResetEmail(email: string) {
   const apiKey = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
   if (!apiKey) throw new Error('Falta NEXT_PUBLIC_FIREBASE_API_KEY');
 
-  const res = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=${apiKey}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      requestType: 'PASSWORD_RESET',
-      email,
-    }),
-  });
+  const res = await fetch(
+    `https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=${apiKey}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requestType: 'PASSWORD_RESET', email }),
+    }
+  );
 
   if (!res.ok) {
     const data = await res.json();
@@ -35,18 +35,13 @@ async function sendFirebaseResetEmail(email: string) {
   return true;
 }
 
-// ─── Invitar usuario (crear con email y enviar link de acceso) ───
+// ── Invite user ────────────────────────────────────────────────
 export async function inviteUser(email: string, fullName: string) {
   await requireSuperadmin();
 
   try {
-    // 1. Crear usuario en Firebase Auth sin contraseña
-    const newUser = await adminAuth.createUser({
-      email,
-      displayName: fullName,
-    });
+    const newUser = await adminAuth.createUser({ email, displayName: fullName });
 
-    // 2. Crear documento de perfil en Firestore con system_role
     await adminDb.collection('users').doc(newUser.uid).set({
       full_name: fullName,
       avatar_url: '',
@@ -54,12 +49,9 @@ export async function inviteUser(email: string, fullName: string) {
       created_at: new Date().toISOString(),
     });
 
-    // 3. Enviar el email usando el servicio nativo de Firebase Auth
     try {
       await sendFirebaseResetEmail(email);
-    } catch (emailError) {
-      console.error('[inviteUser] Email failed to send via Firebase:', emailError);
-      // Fallback a generar el link manual por si Firebase falla
+    } catch (emailError: unknown) {
       const actionCodeSettings = {
         url: `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/login?welcome=true`,
         handleCodeInApp: false,
@@ -78,13 +70,12 @@ export async function inviteUser(email: string, fullName: string) {
 
     revalidatePath('/admin');
     return { success: true, userId: newUser.uid, emailSent: true };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(message);
+  } catch (err: unknown) {
+    throw new Error(err instanceof Error ? err.message : String(err));
   }
 }
 
-// ─── Cambiar system_role de un usuario ───
+// ── Update system role ─────────────────────────────────────────
 export async function updateSystemRole(targetUserId: string, newRole: 'user' | 'superadmin') {
   await requireSuperadmin();
 
@@ -96,56 +87,61 @@ export async function updateSystemRole(targetUserId: string, newRole: 'user' | '
   revalidatePath('/admin');
 }
 
-// ─── Obtener TODOS los usuarios ───
+// ── Get all users (batch-optimized, no N+1) ────────────────────
 export async function getAllUsers(): Promise<UserRecord[]> {
   await requireSuperadmin();
 
-  const usersSnap = await adminDb.collection('users').orderBy('created_at', 'desc').get();
-  const projectsSnap = await adminDb.collection('projects').get();
+  const [usersSnap, projectsSnap] = await Promise.all([
+    adminDb.collection('users').orderBy('created_at', 'desc').get(),
+    adminDb.collection('projects').get(),
+  ]);
 
-  const projects = projectsSnap.docs.map(d => ({ id: d.id, ...d.data() } as {
-    id: string; name: string; owner_id: string; members?: string[]
+  const projects = projectsSnap.docs.map((d) => ({
+    id: d.id,
+    ...(d.data() as { name: string; owner_id: string; members?: string[] }),
   }));
 
-  const usersWithData = await Promise.all(
-    usersSnap.docs.map(async (docSnap) => {
-      const userData = docSnap.data();
-      let email = 'Desconocido';
-      try {
-        const authUser = await adminAuth.getUser(docSnap.id);
-        email = authUser.email || 'Desconocido';
-      } catch {
-        // El usuario puede existir en Firestore pero no en Auth (datos migrados)
-      }
+  const userIds = usersSnap.docs.map((d) => d.id);
 
-      const ownedProjects = projects
-        .filter(p => p.owner_id === docSnap.id)
-        .map(p => ({ name: p.name, role: 'owner' }));
+  // Batch-fetch all Auth emails in one call (max 100 per call, chunk if needed)
+  const emailMap = new Map<string, string>();
+  const chunkSize = 100;
+  for (let i = 0; i < userIds.length; i += chunkSize) {
+    const chunk = userIds.slice(i, i + chunkSize);
+    const authResult = await adminAuth.getUsers(chunk.map((uid) => ({ uid })));
+    authResult.users.forEach((u) => emailMap.set(u.uid, u.email || 'Desconocido'));
+  }
 
-      const memberProjects = projects
-        .filter(p => p.owner_id !== docSnap.id && p.members?.includes(docSnap.id))
-        .map(p => ({ name: p.name, role: 'member' }));
+  return usersSnap.docs.map((docSnap) => {
+    const userData    = docSnap.data();
+    const uid         = docSnap.id;
+    const email       = emailMap.get(uid) || 'Desconocido';
 
-      const uniqueProjects = Array.from(
-        new Map([...ownedProjects, ...memberProjects].map(p => [p.name, p])).values()
-      );
+    const ownedProjects  = projects
+      .filter((p) => p.owner_id === uid)
+      .map((p) => ({ name: p.name, role: 'owner' }));
 
-      return {
-        id: docSnap.id,
-        full_name: userData.full_name || '',
-        avatar_url: userData.avatar_url || '',
-        system_role: (userData.system_role || 'user') as 'user' | 'superadmin',
-        email,
-        created_at: userData.created_at || new Date().toISOString(),
-        projects: uniqueProjects,
-      };
-    })
-  );
+    const memberProjects = projects
+      .filter((p) => p.owner_id !== uid && p.members?.includes(uid))
+      .map((p) => ({ name: p.name, role: 'member' }));
 
-  return usersWithData;
+    const uniqueProjects = Array.from(
+      new Map([...ownedProjects, ...memberProjects].map((p) => [p.name, p])).values()
+    );
+
+    return {
+      id:          uid,
+      full_name:   userData.full_name  || '',
+      avatar_url:  userData.avatar_url || '',
+      system_role: (userData.system_role || 'user') as 'user' | 'superadmin',
+      email,
+      created_at:  userData.created_at || new Date().toISOString(),
+      projects:    uniqueProjects,
+    };
+  });
 }
 
-// ─── Reenviar invitación a un usuario existente ───
+// ── Resend invitation ──────────────────────────────────────────
 export async function resendInvitation(targetUserId: string) {
   await requireSuperadmin();
 
@@ -157,12 +153,12 @@ export async function resendInvitation(targetUserId: string) {
     const authUser = await adminAuth.getUser(targetUserId);
     email = authUser.email!;
   } catch {
-    throw new Error('Este usuario no tiene cuenta en Firebase Auth. Usa "Invitar" para creársela.');
+    throw new Error('Este usuario no tiene cuenta en Firebase Auth.');
   }
 
   try {
     await sendFirebaseResetEmail(email);
-  } catch (err) {
+  } catch (err: unknown) {
     throw new Error(`Error enviando email: ${err instanceof Error ? err.message : String(err)}`);
   }
 
@@ -170,23 +166,26 @@ export async function resendInvitation(targetUserId: string) {
   return { success: true };
 }
 
-// ─── Eliminar usuario ───
+// ── Delete user ────────────────────────────────────────────────
 export async function deleteUser(targetUserId: string) {
   await requireSuperadmin();
 
-  // Prevenir eliminación si el usuario es dueño de proyectos
-  const ownedSnap = await adminDb.collection('projects').where('owner_id', '==', targetUserId).count().get();
+  const ownedSnap = await adminDb
+    .collection('projects')
+    .where('owner_id', '==', targetUserId)
+    .count()
+    .get();
   const count = ownedSnap.data().count;
 
   if (count > 0) {
-    throw new Error(`El usuario posee ${count} proyecto(s). Debes eliminar o transferir sus proyectos antes de borrar su cuenta.`);
+    throw new Error(
+      `El usuario posee ${count} proyecto(s). Debes eliminar o transferir sus proyectos antes de borrar su cuenta.`
+    );
   }
 
-  // Eliminar de Auth (puede fallar si el usuario es "fantasma" de migración)
   try {
     await adminAuth.deleteUser(targetUserId);
-  } catch (err) {
-    // Si no existe en Auth, continuar y eliminar solo de Firestore
+  } catch (err: unknown) {
     console.warn('[deleteUser] User not in Auth:', err);
   }
 
