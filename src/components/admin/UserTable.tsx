@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { updateSystemRole, deleteUser, resendInvitation } from '@/app/actions/admin';
+import { useState, useEffect } from 'react';
+import { updateSystemRole, deleteUser, resendInvitation, getAllUsers } from '@/app/actions/admin';
 import { format, parseISO, isValid } from 'date-fns';
 import { es } from 'date-fns/locale';
 
@@ -15,9 +15,35 @@ interface UserData {
   projects?: { name: string; role: string }[];
 }
 
-export function UserTable({ users, currentUserId }: { users: UserData[], currentUserId: string }) {
+export function UserTable({ users: initialUsers, currentUserId }: { users: UserData[], currentUserId: string }) {
+  const [userList, setUserList] = useState<UserData[]>(initialUsers);
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [resendStatus, setResendStatus] = useState<Record<string, 'loading' | 'ok' | 'error'>>({});
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(initialUsers.length >= 50);
+
+  useEffect(() => {
+    setUserList(initialUsers);
+    setHasMore(initialUsers.length >= 50);
+  }, [initialUsers]);
+
+  const loadMore = async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const lastId = userList[userList.length - 1]?.id;
+      const moreUsers = await getAllUsers(50, lastId);
+      if (moreUsers.length < 50) setHasMore(false);
+      if (moreUsers.length > 0) {
+        setUserList(prev => [...prev, ...moreUsers]);
+      }
+    } catch (err) {
+      console.error('Error loading more users:', err);
+      alert('Error cargando más usuarios');
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   const handleRoleChange = async (userId: string, newRole: string) => {
     if (userId === currentUserId) return;
@@ -68,7 +94,7 @@ export function UserTable({ users, currentUserId }: { users: UserData[], current
   return (
     <div className="glass-card overflow-hidden fade-in shadow-xl">
       {/* Banner de alerta si hay usuarios fantasma */}
-      {users.some(isGhostUser) && (
+      {userList.some(isGhostUser) && (
         <div className="flex items-start gap-3 px-6 py-4 bg-warning-500/5 border-b border-warning-500/15">
           <svg className="w-5 h-5 text-warning-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
@@ -98,7 +124,7 @@ export function UserTable({ users, currentUserId }: { users: UserData[], current
             </tr>
           </thead>
           <tbody className="divide-y divide-surface-700/30">
-            {users.map((user) => {
+            {userList.map((user) => {
               const isCurrentUser = user.id === currentUserId;
               const isGhost = isGhostUser(user);
               const dateObj = (() => {
@@ -262,6 +288,26 @@ export function UserTable({ users, currentUserId }: { users: UserData[], current
           </tbody>
         </table>
       </div>
+
+      {/* Pagination Footer */}
+      {hasMore && (
+        <div className="p-4 border-t border-surface-700/50 flex justify-center bg-surface-800/30">
+          <button
+            onClick={loadMore}
+            disabled={loadingMore}
+            className="btn-secondary text-xs px-4 py-2 flex items-center gap-2"
+          >
+            {loadingMore ? (
+              <span className="spinner w-3 h-3 border-2 border-t-transparent rounded-full animate-spin"></span>
+            ) : (
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            )}
+            {loadingMore ? 'Cargando...' : 'Cargar más usuarios'}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

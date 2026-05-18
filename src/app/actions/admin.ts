@@ -35,28 +35,40 @@ async function sendFirebaseResetEmail(email: string) {
   return true;
 }
 
+import { z } from 'zod';
+
+const EmailSchema = z.string().email('Email inválido');
+const StringIdSchema = z.string().min(1, 'ID requerido');
+const RoleSchema = z.enum(['user', 'superadmin']);
+
+const InviteUserSchema = z.object({
+  email: EmailSchema,
+  fullName: z.string().min(2, 'El nombre debe tener al menos 2 caracteres').max(100, 'Nombre demasiado largo'),
+});
+
 // ── Invite user ────────────────────────────────────────────────
 export async function inviteUser(email: string, fullName: string) {
   await requireSuperadmin();
+  const parsed = InviteUserSchema.parse({ email, fullName });
 
   try {
-    const newUser = await adminAuth.createUser({ email, displayName: fullName });
+    const newUser = await adminAuth.createUser({ email: parsed.email, displayName: parsed.fullName });
 
     await adminDb.collection('users').doc(newUser.uid).set({
-      full_name: fullName,
+      full_name: parsed.fullName,
       avatar_url: '',
       system_role: 'user',
       created_at: new Date().toISOString(),
     });
 
     try {
-      await sendFirebaseResetEmail(email);
+      await sendFirebaseResetEmail(parsed.email);
     } catch (emailError: unknown) {
       const actionCodeSettings = {
         url: `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/login?welcome=true`,
         handleCodeInApp: false,
       };
-      const resetLink = await adminAuth.generatePasswordResetLink(email, actionCodeSettings);
+      const resetLink = await adminAuth.generatePasswordResetLink(parsed.email, actionCodeSettings);
 
       revalidatePath('/admin');
       return {
@@ -78,21 +90,32 @@ export async function inviteUser(email: string, fullName: string) {
 // ── Update system role ─────────────────────────────────────────
 export async function updateSystemRole(targetUserId: string, newRole: 'user' | 'superadmin') {
   await requireSuperadmin();
+  const parsedId = StringIdSchema.parse(targetUserId);
+  const parsedRole = RoleSchema.parse(newRole);
 
-  const targetSnap = await adminDb.collection('users').doc(targetUserId).get();
+  const targetSnap = await adminDb.collection('users').doc(parsedId).get();
   if (!targetSnap.exists) throw new Error('Usuario no encontrado.');
 
-  await adminDb.collection('users').doc(targetUserId).update({ system_role: newRole });
+  await adminDb.collection('users').doc(parsedId).update({ system_role: parsedRole });
 
   revalidatePath('/admin');
 }
 
-// ── Get all users (batch-optimized, no N+1) ────────────────────
-export async function getAllUsers(): Promise<UserRecord[]> {
+// ── Get all users (batch-optimized, paginated) ─────────────────
+export async function getAllUsers(limitCount = 50, lastId?: string): Promise<UserRecord[]> {
   await requireSuperadmin();
 
+  let query = adminDb.collection('users').orderBy('created_at', 'desc').limit(limitCount);
+
+  if (lastId) {
+    const lastDoc = await adminDb.collection('users').doc(lastId).get();
+    if (lastDoc.exists) {
+      query = query.startAfter(lastDoc);
+    }
+  }
+
   const [usersSnap, projectsSnap] = await Promise.all([
-    adminDb.collection('users').orderBy('created_at', 'desc').get(),
+    query.get(),
     adminDb.collection('projects').get(),
   ]);
 
@@ -108,6 +131,7 @@ export async function getAllUsers(): Promise<UserRecord[]> {
   const chunkSize = 100;
   for (let i = 0; i < userIds.length; i += chunkSize) {
     const chunk = userIds.slice(i, i + chunkSize);
+    if (chunk.length === 0) continue;
     const authResult = await adminAuth.getUsers(chunk.map((uid) => ({ uid })));
     authResult.users.forEach((u) => emailMap.set(u.uid, u.email || 'Desconocido'));
   }
@@ -144,13 +168,14 @@ export async function getAllUsers(): Promise<UserRecord[]> {
 // ── Resend invitation ──────────────────────────────────────────
 export async function resendInvitation(targetUserId: string) {
   await requireSuperadmin();
+  const parsedId = StringIdSchema.parse(targetUserId);
 
-  const docSnap = await adminDb.collection('users').doc(targetUserId).get();
+  const docSnap = await adminDb.collection('users').doc(parsedId).get();
   if (!docSnap.exists) throw new Error('Usuario no encontrado en Firestore.');
 
   let email: string;
   try {
-    const authUser = await adminAuth.getUser(targetUserId);
+    const authUser = await adminAuth.getUser(parsedId);
     email = authUser.email!;
   } catch {
     throw new Error('Este usuario no tiene cuenta en Firebase Auth.');
@@ -169,10 +194,11 @@ export async function resendInvitation(targetUserId: string) {
 // ── Delete user ────────────────────────────────────────────────
 export async function deleteUser(targetUserId: string) {
   await requireSuperadmin();
+  const parsedId = StringIdSchema.parse(targetUserId);
 
   const ownedSnap = await adminDb
     .collection('projects')
-    .where('owner_id', '==', targetUserId)
+    .where('owner_id', '==', parsedId)
     .count()
     .get();
   const count = ownedSnap.data().count;
@@ -184,12 +210,12 @@ export async function deleteUser(targetUserId: string) {
   }
 
   try {
-    await adminAuth.deleteUser(targetUserId);
+    await adminAuth.deleteUser(parsedId);
   } catch (err: unknown) {
     console.warn('[deleteUser] User not in Auth:', err);
   }
 
-  await adminDb.collection('users').doc(targetUserId).delete();
+  await adminDb.collection('users').doc(parsedId).delete();
 
   revalidatePath('/admin');
 }
