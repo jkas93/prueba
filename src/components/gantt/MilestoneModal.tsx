@@ -28,13 +28,6 @@ export function MilestoneModal({ projectId, isOwner, onUpdate }: MilestoneModalP
   
   const { db } = useFirebase();
 
-  useEffect(() => {
-    if (isOpen) {
-      fetchMilestones();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen]);
-
   const fetchMilestones = async () => {
     setLoading(true);
     try {
@@ -49,6 +42,13 @@ export function MilestoneModal({ projectId, isOwner, onUpdate }: MilestoneModalP
     }
     setLoading(false);
   };
+
+  useEffect(() => {
+    if (isOpen) {
+      fetchMilestones();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
