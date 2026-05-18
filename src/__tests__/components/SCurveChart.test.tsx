@@ -26,9 +26,7 @@ describe('SCurveChart - Component Tests', () => {
     expect(screen.getByText(/Sin datos para la Curva S/i)).toBeInTheDocument();
   });
 
-  it('2. Renderiza métricas principales cuando hay datos', () => {
-    // Nota: El gráfico real de recharts puede ser difícil de testear en JSDOM,
-    // pero podemos verificar las métricas del header que dependen de scurveData.
+  it('2. Renderiza métricas principales cuando hay datos', async () => {
     render(
       <SCurveChart 
         project={sampleProject} 
@@ -38,12 +36,12 @@ describe('SCurveChart - Component Tests', () => {
       />
     );
 
-    expect(screen.getByText(/Avance Planificado/i)).toBeInTheDocument();
-    expect(screen.getByText(/Avance Real/i)).toBeInTheDocument();
-    expect(screen.getByText(/SPI \(Índice\)/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Avance Planificado/i, {}, { timeout: 2000 })).toBeInTheDocument();
+    expect(await screen.findByText(/Avance Real/i)).toBeInTheDocument();
+    expect(await screen.findByText(/SPI \(Índice\)/i)).toBeInTheDocument();
   });
 
-  it('3. Muestra el botón de exportar', () => {
+  it('3. Muestra el botón de exportar', async () => {
     render(
       <SCurveChart 
         project={sampleProject} 
@@ -52,6 +50,6 @@ describe('SCurveChart - Component Tests', () => {
         milestones={[]} 
       />
     );
-    expect(screen.getByText(/Exportar PNG/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Exportar PNG/i)).toBeInTheDocument();
   });
 });

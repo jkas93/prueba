@@ -1,63 +1,51 @@
 'use server';
 
 import { adminDb } from '@/lib/firebase/server';
-import { getTokens } from 'next-firebase-auth-edge';
-import { cookies } from 'next/headers';
+import { getProjectRole } from '@/lib/auth/guards';
 import { revalidatePath } from 'next/cache';
-import { FIREBASE_AUTH_CONFIG } from '@/lib/auth/config';
 
 export async function setProjectBaseline(projectId: string) {
-  // Validate owner using next-firebase-auth-edge tokens
-  const cookieStore = await cookies();
-  const tokens = await getTokens(cookieStore, FIREBASE_AUTH_CONFIG);
+  try {
+    // 1. Authorization Check
+    const role = await getProjectRole(projectId);
+    if (role !== 'admin') {
+      return { success: false, error: 'No tienes permiso para fijar la línea base.' };
+    }
 
-  if (!tokens) return { success: false, error: 'No autorizado' };
-  const userId = tokens.decodedToken.uid;
+    // 2. Fetch all activities for the project
+    const activitiesSnapshot = await adminDb.collection('gantt_elements')
+      .where('project_id', '==', projectId)
+      .where('type', '==', 'activity')
+      .get();
 
-  const projectRef = adminDb.collection('projects').doc(projectId);
-  const projectDoc = await projectRef.get();
+    if (activitiesSnapshot.empty) {
+      return { success: true, message: 'No hay actividades para actualizar.' };
+    }
 
-  if (!projectDoc.exists || projectDoc.data()?.owner_id !== userId) {
-    return { success: false, error: 'Solo el dueño puede fijar la línea base' };
-  }
+    // 3. Update activities in chunks of 500 (Firestore limit)
+    const docs = activitiesSnapshot.docs;
+    const chunkSize = 500;
 
-  // Get all activities for this project from the new flattened gantt_elements collection
-  const ganttRef = adminDb.collection('gantt_elements');
-  const activitiesSnapshot = await ganttRef
-    .where('project_id', '==', projectId)
-    .where('type', '==', 'activity')
-    .get();
+    for (let i = 0; i < docs.length; i += chunkSize) {
+      const chunk = docs.slice(i, i + chunkSize);
+      const batch = adminDb.batch();
 
-  if (activitiesSnapshot.empty) {
-    return { success: true, message: 'No hay actividades para fijar' };
-  }
-
-  // Use Firebase Batch Writes
-  let batch = adminDb.batch();
-  let count = 0;
-
-  for (const doc of activitiesSnapshot.docs) {
-    const act = doc.data();
-    if (act.start_date && act.end_date) {
-      batch.update(doc.ref, {
-        baseline_start: act.start_date,
-        baseline_end: act.end_date,
-        updated_at: new Date().toISOString()
+      chunk.forEach((doc) => {
+        const data = doc.data();
+        batch.update(doc.ref, {
+          baseline_start: data.start_date,
+          baseline_end: data.end_date,
+          updated_at: new Date().toISOString()
+        });
       });
-      count++;
-    }
 
-    if (count >= 400) {
       await batch.commit();
-      batch = adminDb.batch();
-      count = 0;
     }
-  }
 
-  if (count > 0) {
-    await batch.commit();
+    revalidatePath(`/projects/${projectId}`);
+    return { success: true };
+  } catch (error: any) {
+    console.error('Error setting baseline:', error);
+    return { success: false, error: error.message || 'Error interno del servidor.' };
   }
-
-  revalidatePath(`/projects/${projectId}`);
-  return { success: true };
 }

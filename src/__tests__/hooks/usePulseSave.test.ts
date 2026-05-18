@@ -3,16 +3,7 @@ import { renderHook, act } from '@testing-library/react';
 import { usePulseSave } from '@/components/project/pulse/usePulseSave';
 import { EnhancedPartida, EditedValues } from '@/components/project/pulse/types';
 
-// Mock Supabase & Router
-vi.mock('@/lib/supabase/client', () => ({
-  createClient: vi.fn(() => ({
-    auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: 'test-user' } }, error: null }) },
-    from: vi.fn().mockReturnThis(),
-    upsert: vi.fn().mockReturnValue({ error: null }),
-    storage: { from: vi.fn().mockReturnThis(), upload: vi.fn().mockResolvedValue({ data: { path: 'test' }, error: null }), getPublicUrl: vi.fn().mockReturnValue({ data: { publicUrl: 'http://test.com' } }) }
-  }))
-}));
-
+// Mock Router
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ refresh: vi.fn() })
 }));

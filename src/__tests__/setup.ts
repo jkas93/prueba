@@ -20,32 +20,72 @@ vi.mock('next/navigation', () => ({
   }
 }));
 
-// Mock Supabase
-vi.mock('@/lib/supabase/client', () => {
-  return {
-    createClient: () => {
-      return {
-        auth: {
-          getUser: vi.fn().mockResolvedValue({ data: { user: { id: 'test-user-id' } }, error: null }),
-        },
-        from: vi.fn().mockReturnThis(),
-        select: vi.fn().mockReturnThis(),
-        insert: vi.fn().mockReturnThis(),
-        update: vi.fn().mockReturnThis(),
-        delete: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
-        in: vi.fn().mockReturnThis(),
-        order: vi.fn().mockReturnThis(),
-        single: vi.fn().mockResolvedValue({ data: null, error: null }),
-        maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
-      };
-    }
-  };
-});
-
 // Polyfill for ResizeObserver if needed by Recharts/Gantt
 global.ResizeObserver = class ResizeObserver {
   observe() {}
   unobserve() {}
   disconnect() {}
 };
+
+// Mock Worker for SCurve testing
+global.Worker = class {
+  onmessage: (e: any) => void = () => {};
+  postMessage(data: any) {
+    // Basic mock logic to return something successfull
+    setTimeout(() => {
+      if (this.onmessage) {
+        this.onmessage({
+          data: {
+            success: true,
+            result: {
+              points: [{ date: '2026-03-10', planned: 50, actual: 45, deviation: -5 }],
+              currentPlanned: 50,
+              currentActual: 45,
+              spiIndex: 0.9,
+              latestProgressDate: '2026-03-10'
+            }
+          }
+        });
+      }
+    }, 10);
+  }
+  terminate() {}
+} as any;
+
+// Mock Firebase
+vi.mock('@/lib/firebase/client', () => ({
+  auth: {
+    currentUser: { uid: 'test-user-id' },
+    onAuthStateChanged: vi.fn(),
+  },
+  db: {},
+  app: {},
+}));
+
+vi.mock('firebase/auth', () => ({
+  getAuth: vi.fn(() => ({})),
+  onAuthStateChanged: vi.fn(),
+}));
+
+vi.mock('firebase/firestore', () => ({
+  getFirestore: vi.fn(() => ({})),
+  collection: vi.fn(),
+  doc: vi.fn(),
+  getDoc: vi.fn(),
+  getDocs: vi.fn(),
+  addDoc: vi.fn(),
+  updateDoc: vi.fn(),
+  deleteDoc: vi.fn(),
+  writeBatch: vi.fn(() => ({
+    set: vi.fn(),
+    update: vi.fn(),
+    delete: vi.fn(),
+    commit: vi.fn().mockResolvedValue({}),
+  })),
+}));
+
+vi.mock('firebase/app', () => ({
+  initializeApp: vi.fn(() => ({})),
+  getApps: vi.fn(() => []),
+  getApp: vi.fn(),
+}));
